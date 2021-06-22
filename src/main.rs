@@ -2,8 +2,6 @@ use std::time::Duration;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Parameters;
 use reqwest::Client;
 
-mod common;
-use common;
 
 fn stub(val: usize) {
     panic!("{}", val);
