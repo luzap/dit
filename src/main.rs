@@ -1,21 +1,11 @@
-use std::time::Duration;
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Parameters;
-use reqwest::Client;
+mod common;
 
-
-fn stub(val: usize) {
-    panic!("{}", val);
-}
+use serde_json;
 
 fn main() {
 
-    let params = Parameters { share_count: 3, threshold: 2};
-    let party = params.share_count;
-    let delay = Duration::from_millis(25);
-    let uuid = String::from("Hello");
-    let client = Client::new();
+    let keys = common::distributed_keygen();
+    println!("Keys: {}", serde_json::to_string(&keys).unwrap());
 
-    /* common::distributed_keygen();
-    common::distributed_sign(); */
-
+    common::distributed_sign(String::from("Message"), keys);
 }

@@ -1,73 +1,132 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
-use rocket::*;
-use rocket_contrib::json::Json;
+use std::collections::HashMap;
+use std::fs;
 use std::sync::RwLock;
-use std::net::SocketAddr;
-use uuid;
-use serde::{Serialize, Deserialize};
 
-const PARTY_SIZE: u16 = 4;
-const THRESHOLD: u16 = 2;
+use rocket::{post, routes, State};
+use rocket_contrib::json::Json;
+use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Clone)]
-struct User {
-    uuid: uuid::Uuid,
-    index: usize,
-    party_size: u16,
-    threshold: u16
-}
+mod common;
+use common::{Entry, Index, Key, Params, PartySignup};
 
-impl User {
-    fn new(uuid: uuid::Uuid, index: usize, party_size: u16, threshold: u16) -> User {
-        User { uuid, index, party_size, threshold }
-
+#[post("/get", format = "json", data = "<request>")]
+fn get(
+    db_mtx: State<RwLock<HashMap<Key, String>>>,
+    request: Json<Index>,
+) -> Json<Result<Entry, ()>> {
+    let index: Index = request.0;
+    let hm = db_mtx.read().unwrap();
+    match hm.get(&index.key) {
+        Some(v) => {
+            let entry = Entry {
+                key: index.key,
+                value: v.clone().to_string(),
+            };
+            Json(Ok(entry))
+        }
+        None => Json(Err(())),
     }
-    
 }
 
-#[derive(Serialize, Deserialize)]
-enum RegistrationError {
-    AddressInUse,
-    CarryingCapacity,
-    DatabaseError
+#[post("/set", format = "json", data = "<request>")]
+fn set(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) -> Json<Result<(), ()>> {
+    let entry: Entry = request.0;
+    let mut hm = db_mtx.write().unwrap();
+    hm.insert(entry.key.clone(), entry.value.clone());
+    Json(Ok(()))
 }
 
-#[get("/register", format = "json")]
-fn register(users_db: State<RwLock<Vec<User>>>,
-                 client: SocketAddr) ->Json<Result<User, RegistrationError>> {
-    println!("{}:{}", client.ip(), client.port());
-    
-    let index = match users_db.read() {
-        Ok(arr) => (*arr).len() + 1,
-        Err(_) => return Json(Err(RegistrationError::DatabaseError)) 
+#[post("/signupkeygen", format = "json")]
+fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+    let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
+    let parties = params.parties.parse::<u16>().unwrap();
+
+    let key = "signup-keygen".to_string();
+
+    let party_signup = {
+        let hm = db_mtx.read().unwrap();
+        let value = hm.get(&key).unwrap();
+        let client_signup: PartySignup = serde_json::from_str(&value).unwrap();
+        if client_signup.number < parties {
+            PartySignup {
+                number: client_signup.number + 1,
+                uuid: client_signup.uuid,
+            }
+        } else {
+            PartySignup {
+                number: 1,
+                uuid: Uuid::new_v4().to_string(),
+            }
+        }
     };
-    
-    if index > PARTY_SIZE as usize {
-        return Json(Err(RegistrationError::CarryingCapacity));
-    }
 
-
-    let uuid = uuid::Uuid::new_v4();
-
-    match users_db.write() {
-        Ok(mut arr) => {
-            let user = User::new(uuid, index, PARTY_SIZE, THRESHOLD);
-            (*arr).push(user.clone());
-            return Json(Ok(user));
-        },
-        Err(_) => return Json(Err(RegistrationError::DatabaseError))
-    };
+    let mut hm = db_mtx.write().unwrap();
+    hm.insert(key, serde_json::to_string(&party_signup).unwrap());
+    Json(Ok(party_signup))
 }
+
+#[post("/signupsign", format = "json")]
+fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+    //read parameters:
+    let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
+    let threshold = params.threshold.parse::<u16>().unwrap();
+    let key = "signup-sign".to_string();
+
+    let party_signup = {
+        let hm = db_mtx.read().unwrap();
+        let value = hm.get(&key).unwrap();
+        let client_signup: PartySignup = serde_json::from_str(&value).unwrap();
+        if client_signup.number < threshold + 1 {
+            PartySignup {
+                number: client_signup.number + 1,
+                uuid: client_signup.uuid,
+            }
+        } else {
+            PartySignup {
+                number: 1,
+                uuid: Uuid::new_v4().to_string(),
+            }
+        }
+    };
+
+    let mut hm = db_mtx.write().unwrap();
+    hm.insert(key, serde_json::to_string(&party_signup).unwrap());
+    Json(Ok(party_signup))
+}
+
 
 fn main() {
-    // TODO What does this even map between?
-    let users: Vec<User> = Vec::new();
-    let users_db = RwLock::new(users);
+    let db: HashMap<Key, String> = HashMap::new();
+    let db_mtx = RwLock::new(db);
+
+    let keygen_key = "signup-keygen".to_string();
+    let sign_key = "signup-sign".to_string();
+
+    let uuid_keygen = Uuid::new_v4().to_string();
+    let uuid_sign = Uuid::new_v4().to_string();
+
+    let party1 = 0;
+    let party_signup_keygen = PartySignup {
+        number: party1,
+        uuid: uuid_keygen,
+    };
+    let party_signup_sign = PartySignup {
+        number: party1,
+        uuid: uuid_sign,
+    };
+    {
+        let mut hm = db_mtx.write().unwrap();
+        hm.insert(
+            keygen_key,
+            serde_json::to_string(&party_signup_keygen).unwrap(),
+        );
+        hm.insert(sign_key, serde_json::to_string(&party_signup_sign).unwrap());
+    }
 
     rocket::ignite()
-        .mount("/", routes![register])
-        .manage(users_db)
+        .mount("/", routes![get, set, signup_keygen, signup_sign])
+        .manage(db_mtx)
         .launch();
 }
-
