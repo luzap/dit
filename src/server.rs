@@ -1,15 +1,14 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::collections::HashMap;
-use std::fs;
 use std::sync::RwLock;
 
 use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
 use uuid::Uuid;
 
-mod common;
-use common::{Entry, Index, Key, Params, PartySignup};
+mod protocol;
+use protocol::{Entry, Index, Key, Params, PartySignup};
 
 #[post("/get", format = "json", data = "<request>")]
 fn get(
@@ -39,7 +38,7 @@ fn set(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) -> Jso
 }
 
 #[post("/signupkeygen", format = "json")]
-fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<PartySignup> {
     let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
     let parties = params.parties.parse::<u16>().unwrap();
 
@@ -64,11 +63,11 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<Par
 
     let mut hm = db_mtx.write().unwrap();
     hm.insert(key, serde_json::to_string(&party_signup).unwrap());
-    Json(Ok(party_signup))
+    Json(party_signup)
 }
 
 #[post("/signupsign", format = "json")]
-fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<PartySignup> {
     //read parameters:
     let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
     let threshold = params.threshold.parse::<u16>().unwrap();
@@ -93,7 +92,7 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<Party
 
     let mut hm = db_mtx.write().unwrap();
     hm.insert(key, serde_json::to_string(&party_signup).unwrap());
-    Json(Ok(party_signup))
+    Json(party_signup)
 }
 
 

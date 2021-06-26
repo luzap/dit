@@ -1,11 +1,13 @@
-mod common;
-
-use serde_json;
+mod protocol;
+mod pgp;
 
 fn main() {
 
-    let keys = common::distributed_keygen();
-    println!("Keys: {}", serde_json::to_string(&keys).unwrap());
+    let keys: protocol::PartyKeyPair = match protocol::distributed_keygen() {
+        Ok(keys) => keys,
+        Err(e) => panic!("An error occurred: {:?}", e)
+    };
 
-    common::distributed_sign(String::from("Message"), keys);
+    let _ = protocol::distributed_sign(String::from("Message"), keys);
+    
 }

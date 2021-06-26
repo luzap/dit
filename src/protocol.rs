@@ -14,11 +14,11 @@ use curv::{
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{
     KeyGenBroadcastMessage1, KeyGenDecommitMessage1, Parameters, SharedKeys,
-    Keys, SignBroadcastPhase1, SignDecommitPhase1, SignKeys, LocalSignature
+    Keys, SignBroadcastPhase1, SignDecommitPhase1, SignKeys, SignatureRecid, 
+    LocalSignature
 };
 
 use multi_party_ecdsa::utilities::mta::{MessageA, MessageB};
-
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::*;
 
 
@@ -26,54 +26,15 @@ use paillier::*;
 use zk_paillier::zkproofs::DLogStatement;
 
 use std::time::Duration;
-use reqwest::Client;
-
+use reqwest;
 use serde::{Serialize, Deserialize};
+use std::{env, thread, time};
+use std::fmt;
 
-use std::{iter::repeat, env, thread, time};
-
-#[allow(dead_code)]
-pub const AES_KEY_BYTES_LEN: usize = 32;
 
 pub type Key = String;
 
 
-use crypto::{
-    aead::{AeadDecryptor, AeadEncryptor},
-    aes::KeySize::KeySize256,
-    aes_gcm::AesGcm,
-};
-
-
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
-pub struct AEAD {
-    pub ciphertext: Vec<u8>,
-    pub tag: Vec<u8>,
-}
-
-#[allow(dead_code)]
-pub fn aes_encrypt(key: &[u8], plaintext: &[u8]) -> AEAD {
-    let nonce: Vec<u8> = repeat(3).take(12).collect();
-    let aad: [u8; 0] = [];
-    let mut gcm = AesGcm::new(KeySize256, key, &nonce[..], &aad);
-    let mut out: Vec<u8> = repeat(0).take(plaintext.len()).collect();
-    let mut out_tag: Vec<u8> = repeat(0).take(16).collect();
-    gcm.encrypt(&plaintext[..], &mut out[..], &mut out_tag[..]);
-    AEAD {
-        ciphertext: out.to_vec(),
-        tag: out_tag.to_vec(),
-    }
-}
-
-#[allow(dead_code)]
-pub fn aes_decrypt(key: &[u8], aead_pack: AEAD) -> Vec<u8> {
-    let mut out: Vec<u8> = repeat(0).take(aead_pack.ciphertext.len()).collect();
-    let nonce: Vec<u8> = repeat(3).take(12).collect();
-    let aad: [u8; 0] = [];
-    let mut gcm = AesGcm::new(KeySize256, key, &nonce[..], &aad);
-    gcm.decrypt(&aead_pack.ciphertext[..], &mut out, &aead_pack.tag[..]);
-    out
-}
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PartySignup {
     pub number: u16,
@@ -97,121 +58,169 @@ pub struct Params {
     pub threshold: String,
 }
 
-pub fn postb<T>(client: &Client, path: &str, body: T) -> Option<String>
-where
-    T: serde::ser::Serialize,
-{
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "http://localhost:8000".to_string());
-    let retries = 3;
-    let retry_delay = time::Duration::from_millis(250);
-    for _i in 1..retries {
-        let res = client
-            .post(&format!("{}/{}", addr, path))
-            .json(&body)
-            .send();
+pub struct Channel {
+    client: reqwest::Client,
+    uuid: String
+}
 
-        if let Ok(mut res) = res {
-            return Some(res.text().unwrap());
+impl Channel {
+
+    pub fn new() -> Channel {
+        Channel {
+            client: reqwest::Client::new(), 
+            uuid: "".to_string()
         }
-        thread::sleep(retry_delay);
     }
-    None
-}
 
-pub fn broadcast(
-    client: &Client,
-    party_num: u16,
-    round: &str,
-    data: String,
-    sender_uuid: String,
-) -> Result<(), ()> {
-    let key = format!("{}-{}-{}", party_num, round, sender_uuid);
-    let entry = Entry {
-        key: key.clone(),
-        value: data,
-    };
 
-    let res_body = postb(&client, "set", entry).unwrap();
-    serde_json::from_str(&res_body).unwrap()
-}
+    fn postb<T>(&self, path: &str, body: T) -> Option<String>
+    where
+        T: serde::ser::Serialize,
+    {
+        let addr = env::args()
+            .nth(1)
+            .unwrap_or_else(|| "http://localhost:8000".to_string());
+        let retries = 3;
+        let retry_delay = time::Duration::from_millis(250);
+        for _i in 1..retries {
+            let res = self.client
+                .post(&format!("{}/{}", addr, path))
+                .json(&body)
+                .send();
 
-pub fn sendp2p(
-    client: &Client,
-    party_from: u16,
-    party_to: u16,
-    round: &str,
-    data: String,
-    sender_uuid: String,
-) -> Result<(), ()> {
-    let key = format!("{}-{}-{}-{}", party_from, party_to, round, sender_uuid);
+            if let Ok(mut res) = res {
+                return Some(res.text().unwrap());
+            }
+            thread::sleep(retry_delay);
+        }
+        None
+    }
 
-    let entry = Entry {
-        key: key.clone(),
-        value: data,
-    };
+    pub fn broadcast(
+        &self,
+        party_num: u16,
+        round: &str,
+        data: String,
+    ) -> Result<(), ()> {
+        let key = format!("{}-{}-{}", party_num, round, self.uuid);
+        let entry = Entry {
+            key: key.clone(),
+            value: data,
+        };
 
-    let res_body = postb(&client, "set", entry).unwrap();
-    serde_json::from_str(&res_body).unwrap()
-}
+        let res_body = self.postb("set", entry).unwrap();
+        serde_json::from_str(&res_body).unwrap()
+    }
 
-pub fn poll_for_broadcasts(
-    client: &Client,
-    party_num: u16,
-    n: u16,
-    delay: Duration,
-    round: &str,
-    sender_uuid: String,
-) -> Vec<String> {
-    let mut ans_vec = Vec::new();
-    for i in 1..=n {
-        if i != party_num {
-            let key = format!("{}-{}-{}", i, round, sender_uuid);
-            let index = Index { key };
-            loop {
-                // add delay to allow the server to process request:
-                thread::sleep(delay);
-                let res_body = postb(client, "get", index.clone()).unwrap();
-                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-                if let Ok(answer) = answer {
-                    ans_vec.push(answer.value);
-                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                    break;
+    pub fn sendp2p(
+        &self,
+        party_from: u16,
+        party_to: u16,
+        round: &str,
+        data: String,
+    ) -> Result<(), ()> {
+        let key = format!("{}-{}-{}-{}", party_from, party_to, round, self.uuid);
+
+        let entry = Entry {
+            key: key.clone(),
+            value: data,
+        };
+
+        let res_body = self.postb("set", entry).unwrap();
+        serde_json::from_str(&res_body).unwrap()
+    }
+
+    pub fn poll_for_broadcasts(
+        &self,
+        party_num: u16,
+        n: u16,
+        delay: Duration,
+        round: &str,
+    ) -> Vec<String> {
+        let mut ans_vec = Vec::new();
+        for i in 1..=n {
+            if i != party_num {
+                let key = format!("{}-{}-{}", i, round, self.uuid);
+                let index = Index { key };
+                loop {
+                    // add delay to allow the server to process request:
+                    thread::sleep(delay);
+                    let res_body = self.postb("get", index.clone()).unwrap();
+                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                    if let Ok(answer) = answer {
+                        ans_vec.push(answer.value);
+                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                        break;
+                    }
                 }
             }
         }
+        ans_vec
     }
-    ans_vec
-}
 
-pub fn poll_for_p2p(
-    client: &Client,
-    party_num: u16,
-    n: u16,
-    delay: Duration,
-    round: &str,
-    sender_uuid: String,
-) -> Vec<String> {
-    let mut ans_vec = Vec::new();
-    for i in 1..=n {
-        if i != party_num {
-            let key = format!("{}-{}-{}-{}", i, party_num, round, sender_uuid);
-            let index = Index { key };
-            loop {
-                // add delay to allow the server to process request:
-                thread::sleep(delay);
-                let res_body = postb(client, "get", index.clone()).unwrap();
-                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-                if let Ok(answer) = answer {
-                    ans_vec.push(answer.value);
-                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                    break;
+    pub fn poll_for_p2p(
+        &self,
+        party_num: u16,
+        n: u16,
+        delay: Duration,
+        round: &str,
+    ) -> Vec<String> {
+        let mut ans_vec = Vec::new();
+        for i in 1..=n {
+            if i != party_num {
+                let key = format!("{}-{}-{}-{}", i, party_num, round, self.uuid);
+                let index = Index { key };
+                loop {
+                    // add delay to allow the server to process request:
+                    thread::sleep(delay);
+                    let res_body = self.postb("get", index.clone()).unwrap();
+                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                    if let Ok(answer) = answer {
+                        ans_vec.push(answer.value);
+                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                        break;
+                    }
                 }
             }
         }
+        ans_vec
     }
-    ans_vec
+
+    pub fn signup_keygen(&mut self) -> Result<u16, Errors> {
+        let key = "signup-keygen".to_string();
+
+        let res_body: String = match self.postb("signupkeygen", key) {
+            Some(res) => res,
+            None => return Err(Errors::ResponseError)
+        };
+
+        match serde_json::from_str(&res_body) {
+            Ok(PartySignup { uuid, number } ) => {
+                self.uuid = uuid;
+                return Ok(number)
+            },
+            Err(_) => return Err(Errors::DeserializationError)
+
+        };
+    }
+
+
+    fn signup_sign(&mut self) -> Result<u16, Errors> {
+        let key = "signup-sign".to_string();
+
+        let res_body: String = match self.postb("signupsign", key) {
+            Some(res) => res,
+            None => return Err(Errors::ResponseError)
+        };
+
+        match serde_json::from_str(&res_body) {
+            Ok(PartySignup { uuid, number } ) => {
+                self.uuid = uuid;
+                return Ok(number)
+            },
+            Err(_) => return Err(Errors::DeserializationError)
+        };
+    }
 }
 
 #[allow(dead_code)]
@@ -245,9 +254,6 @@ pub fn check_sig(r: &FE, s: &FE, msg: &BigInt, pk: &GE) {
     assert!(is_correct);
 }
 
-
-
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartyKeyPair {
     pub party_keys_s: Keys,
@@ -258,6 +264,8 @@ pub struct PartyKeyPair {
     pub y_sum_s: GE,
     pub h1_h2_N_tilde_vec_s: Vec<DLogStatement>,
 }
+
+
 
 pub fn extract<'a, T: Deserialize<'a>>(vals: &'a Vec< String>, size: usize) -> Result<Vec<T>, ()> {
     let mut results: Vec<T> = Vec::with_capacity(size);
@@ -281,83 +289,76 @@ impl From<Params> for Parameters {
     }
 }
 
-pub fn signup_keygen(client: &Client) -> Result<PartySignup, ()> {
-    let key = "signup-keygen".to_string();
-
-    let res_body = postb(&client, "signupkeygen", key).unwrap();
-    serde_json::from_str(&res_body).unwrap()
+#[derive(Debug)]
+pub enum Errors {
+    DeserializationError,
+    ResponseError,
+    SendError
 }
 
 
-pub fn signup_sign(client: &Client) -> Result<PartySignup, ()> {
-    let key = "signup-sign".to_string();
-
-    let res_body = postb(&client, "signupsign", key).unwrap();
-    serde_json::from_str(&res_body).unwrap()
-}
-
-// TODO Any way to remove the params arg?
-// TODO Remove the delay arg, which won't be necessary as soon as we move to an epoll-like
-// interface
-pub fn distributed_keygen() -> PartyKeyPair {
+pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
 
     let params = Parameters { threshold: 2, share_count: 4 };
-    let client = Client::new();
-
-    let (party_num_int, uuid) = match signup_keygen(&client).unwrap() {
-        PartySignup { number, uuid } => (number, uuid),
+    let mut channel = Channel::new();
+    let party_num_int = match channel.signup_keygen() {
+        Ok(i) => i,
+        Err(_) => return Err(Errors::ResponseError),
     };
 
     let delay = time::Duration::from_millis(25);
     let input_stage1 = KeyGenStage1Input {
         index: (party_num_int - 1) as usize,
     };
+
     let res_stage1: KeyGenStage1Result = keygen_stage1(&input_stage1);
 
-    assert!(broadcast(
-        &client,
+    match channel.broadcast(
         party_num_int,
         "round1",
         serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
-        uuid.clone()
-    )
-    .is_ok());
-
-    let round1_ans_vec = poll_for_broadcasts(
-        &client,
+    ) {
+            Ok(()) => {},
+            Err(()) => return Err(Errors::SendError)
+        };
+    
+    let round1_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         params.share_count,
         delay,
         "round1",
-        uuid.clone(),
     );
+
     let mut bc1_vec = round1_ans_vec
         .iter()
         .map(|m| serde_json::from_str::<KeyGenBroadcastMessage1>(m).unwrap())
         .collect::<Vec<_>>();
 
     bc1_vec.insert(party_num_int as usize - 1, res_stage1.bc_com1_l);
-    assert!(broadcast(
-        &client,
+
+    match channel.broadcast(
         party_num_int,
         "round2",
         serde_json::to_string(&res_stage1.decom1_l).unwrap(),
-        uuid.clone()
-    )
-    .is_ok());
-    let round2_ans_vec = poll_for_broadcasts(
-        &client,
+    ) {
+            Ok(()) => {},
+            Err(()) => return Err(Errors::SendError)
+        };
+
+    let round2_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         params.share_count,
         delay,
         "round2",
-        uuid.clone(),
     );
+
     let mut decom1_vec = round2_ans_vec
         .iter()
         .map(|m| serde_json::from_str::<KeyGenDecommitMessage1>(m).unwrap())
         .collect::<Vec<_>>();
+
     decom1_vec.insert(party_num_int as usize - 1, res_stage1.decom1_l);
+
     let input_stage2 = KeyGenStage2Input {
         index: (party_num_int - 1) as usize,
         params_s: params.clone(),
@@ -376,34 +377,25 @@ pub fn distributed_keygen() -> PartyKeyPair {
     let (head, tail) = point_vec.split_at(1);
     let y_sum = tail.iter().fold(head[0], |acc, x| acc + x);
 
-    let mut j = 0;
     for (k, i) in (1..=params.share_count).enumerate() {
         if i != party_num_int {
-            // prepare encrypted ss for party i:
-            // This client does not implement the identifiable abort protocol.
-            // If it were these secret shares would need to be broadcasted to indetify the
-            // malicious party.
-            assert!(sendp2p(
-                &client,
+            assert!(channel.sendp2p(
                 party_num_int,
                 i,
                 "round3",
                 serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
-                uuid.clone()
             )
             .is_ok());
-            j += 1;
         }
     }
     // get shares from other parties.
-    let round3_ans_vec = poll_for_p2p(
-        &client,
+    let round3_ans_vec = channel.poll_for_p2p(
         party_num_int,
         params.share_count,
         delay,
         "round3",
-        uuid.clone(),
     );
+
     // decrypt shares from other parties.
     let mut j = 0;
     let mut party_shares: Vec<FE> = Vec::new();
@@ -412,26 +404,18 @@ pub fn distributed_keygen() -> PartyKeyPair {
             party_shares.push(res_stage2.secret_shares_s[(i - 1) as usize]);
         } else {
             party_shares.push(serde_json::from_str(&round3_ans_vec[j]).unwrap());
-
             j += 1;
         }
     }
-    assert!(broadcast(
-        &client,
-        party_num_int,
-        "round4",
+
+    assert!(channel.broadcast(party_num_int, "round4",
         serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
-        uuid.clone()
     )
     .is_ok());
+
     //get vss_scheme for others.
-    let round4_ans_vec = poll_for_broadcasts(
-        &client,
-        party_num_int,
-        params.share_count,
-        delay,
-        "round4",
-        uuid.clone(),
+    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, 
+        params.share_count, delay, "round4"
     );
 
     let mut j = 0;
@@ -455,21 +439,17 @@ pub fn distributed_keygen() -> PartyKeyPair {
     };
     let res_stage3 = keygen_stage3(&input_stage3).expect("stage 3 keygen failed.");
     // round 5: send dlog proof
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round5",
         serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
-        uuid.clone()
     )
     .is_ok());
-    let round5_ans_vec = poll_for_broadcasts(
-        &client,
+    let round5_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         params.share_count,
         delay,
         "round5",
-        uuid.clone(),
     );
 
     let mut j = 0;
@@ -489,6 +469,7 @@ pub fn distributed_keygen() -> PartyKeyPair {
         dlog_proof_vec_s: dlog_proof_vec.clone(),
         y_vec_s: point_vec.clone(),
     };
+
     let _ = keygen_stage4(&input_stage4).expect("keygen stage4 failed.");
     //save key to file:
     let paillier_key_vec = (0..params.share_count)
@@ -499,7 +480,7 @@ pub fn distributed_keygen() -> PartyKeyPair {
         .map(|bc1| bc1.dlog_statement.clone())
         .collect::<Vec<DLogStatement>>();
 
-    PartyKeyPair {
+    Ok(PartyKeyPair {
         party_keys_s: res_stage1.party_keys_l.clone(),
         shared_keys: res_stage3.shared_keys_s.clone(),
         party_num_int_s: party_num_int,
@@ -507,13 +488,13 @@ pub fn distributed_keygen() -> PartyKeyPair {
         paillier_key_vec_s: paillier_key_vec,
         y_sum_s: y_sum,
         h1_h2_N_tilde_vec_s: h1_h2_N_tilde_vec,
-    }
+    })
 }
 
-pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
+pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<SignatureRecid, Errors> {
 
     let params = Parameters { threshold: 2, share_count: 4 };
-    let client = Client::new();
+    let mut channel = Channel::new();
     // delay:
     let delay = time::Duration::from_millis(25);
 
@@ -525,30 +506,24 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
     };
     let message = &message[..];
 
-
-    //signup:
-    let (party_num_int, uuid) = match signup_sign(&client).unwrap() {
-        PartySignup { number, uuid } => (number, uuid),
+    let party_num_int = match channel.signup_sign() {
+        Ok(i) => i,
+        Err(_) => return Err(Errors::ResponseError),
     };
-    println!("number: {:?}, uuid: {:?}", party_num_int, uuid);
 
     // round 0: collect signers IDs
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round0",
         serde_json::to_string(&keypair.party_num_int_s).unwrap(),
-        uuid.clone()
     )
     .is_ok());
 
-    let round0_ans_vec = poll_for_broadcasts(
-        &client,
+    let round0_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         THRESHOLD + 1,
         delay,
         "round0",
-        uuid.clone(),
     );
 
     let mut j = 0;
@@ -573,8 +548,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
     };
     let res_stage1 = sign_stage1(&input_stage1);
     // publish message A  and Commitment and then gather responses from other parties.
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round1",
         serde_json::to_string(&(
@@ -583,16 +557,13 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
             res_stage1.sign_keys.g_w_i
         ))
         .unwrap(),
-        uuid.clone()
     )
     .is_ok());
-    let round1_ans_vec = poll_for_broadcasts(
-        &client,
+    let round1_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         THRESHOLD + 1,
         delay,
         "round1",
-        uuid.clone(),
     );
 
     let mut j = 0;
@@ -644,13 +615,11 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
 
             // If this client were implementing blame(Identifiable abort) then this message should have been broadcast.
             // For the current implementation p2p send is also fine.
-            assert!(sendp2p(
-                &client,
+            assert!(channel.sendp2p(
                 party_num_int,
                 i,
                 "round2",
                 serde_json::to_string(&(c_b_messageb_gammai, c_b_messageb_wi,)).unwrap(),
-                uuid.clone()
             )
             .is_ok());
 
@@ -658,13 +627,8 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
         }
     }
 
-    let round2_ans_vec = poll_for_p2p(
-        &client,
-        party_num_int,
-        THRESHOLD + 1,
-        delay,
-        "round2",
-        uuid.clone(),
+    let round2_ans_vec = channel.poll_for_p2p( party_num_int, THRESHOLD + 1, 
+        delay, "round2"
     );
 
     let mut m_b_gamma_rec_vec: Vec<MessageB> = Vec::new();
@@ -709,22 +673,20 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
     };
     let res_stage4 = sign_stage4(&input_stage4).expect("Sign Stage4 failed.");
     //broadcast decommitment from stage1 and delta_i
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round4",
         serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i,)).unwrap(),
-        uuid.clone()
     )
     .is_ok());
-    let round4_ans_vec = poll_for_broadcasts(
-        &client,
+
+    let round4_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         THRESHOLD + 1,
         delay,
         "round4",
-        uuid.clone(),
     );
+
     let mut delta_i_vec = vec![];
     let mut decom1_vec = vec![];
     let mut j = 0;
@@ -752,21 +714,18 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
         s_ttag: signers_vec.len(),
     };
     let res_stage5 = sign_stage5(&input_stage5).expect("Sign Stage 5 failed.");
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round5",
         serde_json::to_string(&(res_stage5.R_dash.clone(), res_stage5.R.clone(),)).unwrap(),
-        uuid.clone()
     )
     .is_ok());
-    let round5_ans_vec = poll_for_broadcasts(
-        &client,
+
+    let round5_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         THRESHOLD + 1,
         delay,
         "round5",
-        uuid.clone(),
     );
 
     let mut R_vec = vec![];
@@ -802,22 +761,19 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
         message_bn: message_bn.clone(),
     };
     let res_stage6 = sign_stage6(&input_stage6).expect("stage6 sign failed.");
-    assert!(broadcast(
-        &client,
+    assert!(channel.broadcast(
         party_num_int,
         "round6",
         serde_json::to_string(&res_stage6.local_sig.clone()).unwrap(),
-        uuid.clone()
     )
     .is_ok());
-    let round6_ans_vec = poll_for_broadcasts(
-        &client,
+    let round6_ans_vec = channel.poll_for_broadcasts(
         party_num_int,
         THRESHOLD + 1,
         delay,
         "round6",
-        uuid.clone(),
     );
+
     let mut local_sig_vec = vec![];
     let mut j = 0;
     for i in 1..THRESHOLD + 2 {
@@ -834,14 +790,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) {
         ysum: keypair.y_sum_s.clone(),
     };
     let res_stage7 = sign_stage7(&input_stage7).expect("sign stage 7 failed");
-    let sig = res_stage7.local_sig;
-    println!(
-        "party {:?} Output Signature: \nR: {:?}\ns: {:?} \nrecid: {:?} \n",
-        party_num_int,
-        sig.r.get_element(),
-        sig.s.get_element(),
-        sig.recid.clone()
-    );
 
-    check_sig(&sig.r, &sig.s, &message_bn, &keypair.y_sum_s);
+    check_sig(&res_stage7.local_sig.r, &res_stage7.local_sig.s, &message_bn, &keypair.y_sum_s);
+    Ok(res_stage7.local_sig)
 }
