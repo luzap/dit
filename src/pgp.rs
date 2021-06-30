@@ -1,122 +1,36 @@
-struct PGPHeader {
-    header: u8,
-    size: Vec<u8>,
-}
+use std::iter::Iterator;
 
-struct PGPSignature {
-    header: PGPHeader,
-    version: u8,
-    sig_type: u8,
-    public_key_algo: u8,
-    hash_algo: u8,
-    hashed_packet_size: u16,
-    hashed_subpackets: Vec<SignatureSubpacket>,
-    unhashed_packet_size: u16,
-    unhashed_subpackets: Vec<SignatureSubpacket>,
-    msb_hash: u16,
-    r: Vec<u8>,
-    s: Vec<u8>
-}
+const BIN_TO_ASCII: [u8; 64] = [
+    65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 
+    85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 
+    109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 48, 49, 50,
+    51, 52, 53, 54, 55, 56, 57, 43, 47
+];
 
-enum SignatureSubpacket {
-    CreationTime,
-    ExpirationTime,
-    Issuer,
-    SignerID,
-    IssuerFingerprint
-}
-
-
-
-fn peek() -> u32 {
-    1
-}
-
-
-fn get_new_len(c: u8) -> u32
-{
-	if c < 192 {
-        c as u32
-    } else if c < 224 {
-        ((c as u32 - 192) << 8) + peek() + 192
-    } else {
-        1 << ((c as u32) & 0x1f)
-    }
-}
-
-
-enum TypeFlags {
-    BinaryTag = 0x80,
-}
-const NewTag: u8 = 0x40;
-const BINARY_TAG: u8 = 0x80;
-const TAG_MASK: u8 = 0x3f;
-const PARTIAL_MASK: u8 = 0x1f;
-const TAG_COMPRESSED: u8 = 8;
-const CRITICAL_BIT: u8 = 0x80;
-const CRITICAL_MASK: u8 = 0x7f;
-
-const OLD_TAG_SHIFT: u8 = 2;
-const OLD_LEN_MASK: u8 = 0x03;
-
-
-fn read_binary() {
-
-}
-
-fn read_radix64() {
-    // Check for armor section
-    // Then going until the end
-    // Decode each as a base64 character
-}
-
-
-enum Format {
-    Binary,
-    Armor
-}
-
-
-enum Error{
-    ParseError
-}
-
-fn get_old_length(bytes: &[u8]) -> u32 {
-    let mut accum = bytes[0] as u32;
-    for &byte in bytes[1..].iter() {
-        accum |= (byte as u32) << 8;
-    }
-    accum
-}
-
-
-fn parse_packet(file: &[u8]) -> Result<(), Error>  {
-
-    let (format_byte, bytes) = file.split_at(1);
-    // TODO This is wrong: we need to check for nonzero
-    let format = match format_byte[0] & BINARY_TAG {
-       1  => Format::Binary,
-        _ => Format::Armor
-    };
-
-    // TODO This is still pretty horrible
-    for (i, byte) in bytes.iter().enumerate() {
-        let mut tag = byte & TAG_MASK;
-        let len = match byte & NewTag {
-            1 => bytes[i+1] as u32,
-            _ => {
-                match  byte & OLD_LEN_MASK {
-                    0 => bytes[i+1] as u32,
-                    count if count < 3 => get_old_length(&bytes[i..(2 ^ count) as usize]),
-                    3 => unimplemented!(),
-                    _ => unreachable!(),
-                }
-            }
-        };
-        // TODO We have the length, but we don't have the proper packet
+pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8>{
+    let mut encoded: Vec<u8> = Vec::with_capacity((buffer.len()+2)/3 * 4 + 1);
     
-
+    let rem = buffer.len() % 3;
+    let len = buffer.len() - rem;
+    for i in (0..len).step_by(3) {
+        encoded.push(BIN_TO_ASCII[((buffer[i] >> 2) & 0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[((((buffer[i] << 4) & 0o60) |
+                     ((buffer[i+1] >> 4)&0o17))&0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[((((buffer[i+1] << 2) & 0o74) |
+                    ((buffer[i+2] >> 6)& 0o3)) & 0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[(buffer[i+2] & 0o77) as usize]);
     }
 
-    Ok(())
+    if rem == 2 {
+        encoded.push(BIN_TO_ASCII[((buffer[len] >> 2) & 0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[((((buffer[len] << 4) & 0o60)|
+                     ((buffer[len+1] >> 4) & 0o17)) & 0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[(((buffer[len+1] << 2) & 0o74)) as usize]);
+    }
+
+    if rem == 1 {
+        encoded.push(BIN_TO_ASCII[((buffer[len] >> 2) & 0o77) as usize]);
+        encoded.push(BIN_TO_ASCII[((buffer[len] << 4) & 0o60) as usize]);
+    }
+    encoded
 }
