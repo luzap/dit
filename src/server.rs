@@ -7,8 +7,8 @@ use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
 use uuid::Uuid;
 
-mod protocol;
-use protocol::{Entry, Index, Key, Params, PartySignup};
+mod channel;
+use channel::{Entry, Index, Key, Params, PartySignup};
 
 #[post("/get", format = "json", data = "<request>")]
 fn get(
