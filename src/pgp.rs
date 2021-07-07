@@ -1,4 +1,5 @@
 use std::time::{Duration, SystemTime};
+use std::ops::Index;
 
 const BIN_TO_ASCII: [u8; 64] = [
     65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 
@@ -45,7 +46,6 @@ fn get_mpi_bits(mpi: &[u8]) -> u16 {
 
 
 fn format_mpi(mpi: &[u8]) -> Vec<u8> { 
-
     let mut output: Vec<u8> = Vec::new();
     let bits = get_mpi_bits(mpi).to_be_bytes();
     output.extend(bits);
@@ -73,13 +73,9 @@ enum SigType {
 
 
 enum PKAlgo<'a> {
-    RSAEncryptOrSign(&'a [u8]), 
-    RSAEncryptOnly(&'a [u8]),
-    RSASignOnly(&'a [u8]),
-    DSA(&'a [u8], &'a [u8]),
     ECDSA(&'a [u8], &'a [u8]),
-    EdDSA(&'a [u8], &'a [u8])
 }
+
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
@@ -101,13 +97,8 @@ enum SignatureSubpackets {
 }
 
 
-
-
 pub trait Packet {
-    fn write_binary(&self) -> Vec<u8>;
-    fn write_armored(&self) -> Vec<u8>;
-    fn get_hashable(&self) -> Vec<u8>;
-    fn get_trailer(&self) -> Vec<u8>;
+    fn serialize(&self) -> Vec<u8>;
 }
 
 struct SignaturePacket<'a> {
@@ -116,7 +107,6 @@ struct SignaturePacket<'a> {
     pubkey_algo: PKAlgo<'a>,
     hash_algo: HashAlgo,
     subpackets: Vec<SignatureSubpackets>,
-
 }
 
 impl<'a> SignaturePacket<'a> {
@@ -143,7 +133,71 @@ impl<'a> SignaturePacket<'a> {
 
 
 
-impl<'a> Packet for SignaturePacket<'a> {
+struct PKPacket<'a> { 
+    version: Version,
+    creation_time: Duration,
+    days_until_expiration: u16,
+    public_key: PublicKey<'a>       
+}
+
+#[derive(Copy, Clone)]
+enum CurveOID {
+    P256,
+    P384,
+    P521,
+    BrainpoolP256r1,
+    BrainpoolP512r1,
+    Ed25519,
+    Curve25519
+}
+
+
+struct CurveRepr([&'static [u8]; 7]);
+
+const CURVE_REPR: CurveRepr = CurveRepr([
+    &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07],
+    &[0x2B, 0x81, 0x04, 0x00, 0x22],
+    &[0x2B, 0x81, 0x04, 0x00, 0x23],
+    &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07],
+    &[0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0D],
+    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01],
+    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01] 
+]);
+
+impl Index<CurveOID> for CurveRepr {
+    type Output =  &'static [u8];
+
+    fn index(&self, index: CurveOID) -> &Self::Output {
+        match index {
+            CurveOID::P256 => &self.0[0],
+            CurveOID::P384 => &self.0[1],
+            CurveOID::P521 => &self.0[2],
+            CurveOID::BrainpoolP256r1 => &self.0[3],
+            CurveOID::BrainpoolP512r1 => &self.0[4],
+            CurveOID::Ed25519 => &self.0[5],
+            CurveOID::Curve25519 => &self.0[6]
+        }
+    }
+}
+
+
+enum PublicKey<'a> {
+    ECDSA(CurveOID, &'a [u8])
+}
+
+
+impl<'a> SignaturePacket<'a> {
+    fn serialize_radix64(&self) -> Vec<u8> {
+        let binary = self.serialize();
+        let mut armor = Vec::new();
+
+        armor.extend(String::from("--BEGIN PGP SIGNATURE--\n").as_bytes());
+        armor.extend(data_to_radix64(&binary));
+        armor.extend(String::from("\n--END PGP SIGNATURE--\n").as_bytes());
+
+        armor
+    }
+
 /* A V4 signature hashes the packet body starting from its first field, the version number, through the end of the hashed subpacket data and a final extra trailer. Thus, the hashed fields are:
 
     the signature version (0x04),
@@ -175,7 +229,6 @@ impl<'a> Packet for SignaturePacket<'a> {
         // TODO Add algorithm into this
         let public_algo = match self.pubkey_algo {
             PKAlgo::ECDSA(_, _) => 0x13,
-            _ => unimplemented!()
         };
         contents.push(public_algo);
 
@@ -203,17 +256,22 @@ impl<'a> Packet for SignaturePacket<'a> {
     }
     
 
-    fn write_binary(&self) -> Vec<u8> {
+
+}
+
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+impl<'a> Packet for SignaturePacket<'a> {
+    fn serialize(&self) -> Vec<u8> {
         let mut contents = self.get_hashable();
         let mut size = contents.len();
-
-
         
         let mut unhashed: Vec<u8> = Vec::new();
         // TODO Match all of the hashable subpackets here
         for subpacket in self.subpackets.iter() {
             
         }
+
         contents.extend((unhashed.len() as u16).to_be_bytes());
         contents.extend(&unhashed);
 
@@ -229,8 +287,9 @@ impl<'a> Packet for SignaturePacket<'a> {
                 contents.extend(s);
                 size += (s_len as f32 / 8.0).ceil() as usize + 2;
             },
-            _ => unimplemented!()
         }
+
+
         
         let mut temp = Vec::new();
         // TODO What is this value supposed to be?
@@ -238,16 +297,26 @@ impl<'a> Packet for SignaturePacket<'a> {
     
         contents
     }
+}
 
-    fn write_armored(&self) -> Vec<u8> {
-        let binary = self.write_binary();
-        let armor = Vec::new();
 
-        armor.extend(String::from("--BEGIN PGP SIGNATURE--\n").as_bytes());
-        armor.extend(data_to_radix64(&binary));
-        armor.extend(String::from("\n--END PGP SIGNATURE--\n").as_bytes());
+impl Packet for PKPacket<'_> {
+    fn serialize(&self) -> Vec<u8>{
+        let mut binary = Vec::new();
 
-        armor
+        binary.push(self.version as u8);
+        let creation_time = self.creation_time.as_secs().to_be_bytes();
+        binary.extend(&creation_time);
+
+        match self.public_key {
+            PublicKey::ECDSA(oid, key) => {
+                binary.push(CURVE_REPR[oid].len() as u8);
+                binary.extend(CURVE_REPR[oid]);
+                let y_len = get_mpi_bits(key);
+                binary.extend(y_len.to_be_bytes());
+            }
+        }
+        binary  
     }
 
 }
