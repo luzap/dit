@@ -28,11 +28,15 @@ pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8> {
         encoded.push(BIN_TO_ASCII[((((buffer[len] << 4) & 0o60)|
                      ((buffer[len+1] >> 4) & 0o17)) & 0o77) as usize]);
         encoded.push(BIN_TO_ASCII[(((buffer[len+1] << 2) & 0o74)) as usize]);
+        encoded.push('=' as u8);
     }
 
     if rem == 1 {
         encoded.push(BIN_TO_ASCII[((buffer[len] >> 2) & 0o77) as usize]);
         encoded.push(BIN_TO_ASCII[((buffer[len] << 4) & 0o60) as usize]);
+        encoded.push('=' as u8);
+        encoded.push('=' as u8);
+
     }
 
     encoded
@@ -73,6 +77,7 @@ enum SigType {
 
 
 enum PKAlgo<'a> {
+    DSA(&'a [u8], &'a [u8]),
     ECDSA(&'a [u8], &'a [u8]),
 }
 
@@ -92,8 +97,10 @@ enum HashAlgo {
     SHA3_512 = 14
 }
 
-enum SignatureSubpackets {
+enum SignatureSubpackets<'a> {
     CreationTime(Duration),
+    IssuerFingerprint(&'a [u8]),
+    IssuerKeyID(&'a [u8])
 }
 
 
@@ -106,7 +113,8 @@ struct SignaturePacket<'a> {
     sigtype: SigType,
     pubkey_algo: PKAlgo<'a>,
     hash_algo: HashAlgo,
-    subpackets: Vec<SignatureSubpackets>,
+    subpackets: Vec<SignatureSubpackets<'a>>,
+    hash: u16
 }
 
 impl<'a> SignaturePacket<'a> {
@@ -123,15 +131,13 @@ impl<'a> SignaturePacket<'a> {
             pubkey_algo: PKAlgo::ECDSA(r, s),
             hash_algo: HashAlgo::SHA2_256,
             subpackets: Vec::new(),
-
+            hash: 0
         };
         signature.subpackets.push(SignatureSubpackets::CreationTime(epoch));
         
         signature
     }
 }
-
-
 
 struct PKPacket<'a> { 
     version: Version,
@@ -191,9 +197,13 @@ impl<'a> SignaturePacket<'a> {
         let binary = self.serialize();
         let mut armor = Vec::new();
 
-        armor.extend(String::from("--BEGIN PGP SIGNATURE--\n").as_bytes());
+        // Armor header line, with a string surrounded by five dashes on either size of
+        // the text line (Section 6.2)
+        // The newline has to be part of the signature
+        armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n").as_bytes());
+
         armor.extend(data_to_radix64(&binary));
-        armor.extend(String::from("\n--END PGP SIGNATURE--\n").as_bytes());
+        armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
 
         armor
     }
@@ -226,8 +236,9 @@ impl<'a> SignaturePacket<'a> {
 
         contents.push(self.version as u8);
         contents.push(self.sigtype as u8);
-        // TODO Add algorithm into this
+        
         let public_algo = match self.pubkey_algo {
+            PKAlgo::DSA(_, _) => 0x11,
             PKAlgo::ECDSA(_, _) => 0x13,
         };
         contents.push(public_algo);
@@ -248,6 +259,12 @@ impl<'a> SignaturePacket<'a> {
                     temp.extend(time.as_secs().to_be_bytes());
                     subpacket_count += 6;
                 }
+                SignatureSubpackets::IssuerFingerprint(fingerprint) => {
+                    temp.push(33);
+                    temp.push(fingerprint.len() as u8);
+                    temp.extend_from_slice(fingerprint)
+                }
+                _ => {}
             }
         }
         contents.extend(subpacket_count.to_be_bytes());
@@ -287,14 +304,21 @@ impl<'a> Packet for SignaturePacket<'a> {
                 contents.extend(s);
                 size += (s_len as f32 / 8.0).ceil() as usize + 2;
             },
+            PKAlgo::DSA(r, s) => {
+                let r_len = get_mpi_bits(r);
+                contents.extend_from_slice(&r_len.to_be_bytes());
+                contents.extend_from_slice(r);
+                size += (r_len as f32 / 8.0).ceil() as usize + 2;
+
+                let s_len = get_mpi_bits(s);
+                contents.extend(s_len.to_be_bytes());
+                contents.extend(s);
+                size += (s_len as f32 / 8.0).ceil() as usize + 2;
+            }
         }
-
-
-        
         let mut temp = Vec::new();
         // TODO What is this value supposed to be?
         temp.push(0x80);
-    
         contents
     }
 }
@@ -320,4 +344,67 @@ impl Packet for PKPacket<'_> {
     }
 
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn mpi_standard_bitlength() {
+        // From the standard, multiprecision integers (MPIs) should be encoded with a two byte
+        // header indicating its length in bits, followed by the big endian representation of the
+        // integer.
+        
+        // Example from Section 3.2 of RFC 4480
+        assert_eq!(1, get_mpi_bits(&[0x01]));
+
+    }
+
+
+    #[test]
+    fn mpi_impl_bitlength() {
+        // Taken from a correctly formed OpenPGP packet used for testing RFC compliance
+        assert_eq!(255, get_mpi_bits(&[
+                  0x6b, 0xee, 0x77, 0xd9, 0x82, 0xf2, 0x12, 0x82, 0xcb, 0x2e, 
+                  0x68, 0x9a, 0x23, 0xf9, 0xff, 0xc8, 0x1d, 0xa2, 0x95, 0xae,
+                  0x2f, 0x6d, 0x9a, 0x6b, 0xd2, 0xa5, 0x3f, 0x96, 0x56, 0xea, 
+                  0x10, 0xae
+        ]));
+    }
+
+
+    fn serialize_signature() {
+        let signature = SignaturePacket {
+            version: Version::V4,
+            sigtype: SigType::Binary,
+            pubkey_algo: PKAlgo::DSA(
+                &[0x00],
+                &[0x00]
+            ),
+            hash_algo: HashAlgo::SHA2_256,
+            subpackets: vec![
+                SignatureSubpackets::CreationTime(Duration::from_secs(0x60d985ae))
+
+            ],
+            hash: 0x0000,
+        };
+    }
+
+    #[test]
+    fn radix64_basic_conversion() {
+        // Test basic conversion
+        assert_eq!(vec![70, 80, 117, 99, 65, 57, 108, 43],
+            data_to_radix64(&[0x14, 0xFB, 0x9C, 0x03, 0xD9, 0x7E]));
+    }
+
+    #[test]
+    fn radix64_padded_conversion() {
+        assert_eq!(vec![70, 80, 117, 99, 65, 57, 107, 61],
+            data_to_radix64(&[0x14,0xFB,0x9C,0x03,0xD9]));
+    }
+
+
+}
+
+
 
