@@ -3,7 +3,14 @@ use reqwest;
 
 use serde::{Serialize, Deserialize};
 
-use crate::protocol::Errors;
+pub mod traits;
+
+#[derive(Debug)]
+pub enum Errors {
+    DeserializationError,
+    ResponseError,
+    SendError
+}
 
 pub type Key = String;
 

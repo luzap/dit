@@ -1,4 +1,4 @@
-use crate::protocol::{Errors, PartyKeyPair};
+use crate::protocol::PartyKeyPair;
 use curv::arithmetic::Converter;
 use curv::{
     cryptographic_primitives::{
@@ -22,6 +22,7 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::*;
 use paillier::*;
 use std::time;
 
+use crate::channel::Errors;
 use crate::channel;
 
 pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<SignatureRecid, Errors> {
