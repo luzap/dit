@@ -90,6 +90,7 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
         point_vec.push(decom1_vec[(i - 1) as usize].y_i);
     }
 
+    // TODO Can we do split first?
     let (head, tail) = point_vec.split_at(1);
     let y_sum = tail.iter().fold(head[0], |acc, x| acc + x);
 

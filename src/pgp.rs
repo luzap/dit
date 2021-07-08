@@ -100,7 +100,7 @@ enum HashAlgo {
 enum SignatureSubpackets<'a> {
     CreationTime(Duration),
     IssuerFingerprint(&'a [u8]),
-    IssuerKeyID(&'a [u8])
+    IssuerKeyID(u64)
 }
 
 
@@ -271,10 +271,15 @@ impl<'a> SignaturePacket<'a> {
         contents.extend(&temp);
         contents
     }
-    
-
-
 }
+
+#[repr(u8)]
+enum PacketHeader {
+    Signature = 0x02,
+    PublicKey = 0x03
+}
+const PACKET_TAG_OFFSET: u8 = 2; 
+
 
 #[allow(unused_variables)]
 #[allow(unused_mut)]
@@ -286,7 +291,15 @@ impl<'a> Packet for SignaturePacket<'a> {
         let mut unhashed: Vec<u8> = Vec::new();
         // TODO Match all of the hashable subpackets here
         for subpacket in self.subpackets.iter() {
-            
+           match subpacket {
+                SignatureSubpackets::IssuerKeyID(keyid) => {
+                    unhashed.push(0x10);
+                    
+
+
+                }
+                _ => continue
+            }
         }
 
         contents.extend((unhashed.len() as u16).to_be_bytes());
@@ -316,10 +329,23 @@ impl<'a> Packet for SignaturePacket<'a> {
                 size += (s_len as f32 / 8.0).ceil() as usize + 2;
             }
         }
+        
+        let mut header: u8 = 0b1000_0000;
+        header |= (PacketHeader::Signature as u8) << PACKET_TAG_OFFSET;
+
+        // TODO Count leading zeroes
+        let leading_zeroes = size.to_be_bytes().partition_point(|&x| x == 0);
+        let size_bytes = &size.to_be_bytes()[leading_zeroes..];
+
+        header |= size_bytes.len() as u8;
+
         let mut temp = Vec::new();
         // TODO What is this value supposed to be?
-        temp.push(0x80);
-        contents
+        temp.push(header);
+        temp.extend_from_slice(size_bytes);
+        temp.extend(contents);
+
+        temp
     }
 }
 
@@ -372,7 +398,7 @@ mod test {
         ]));
     }
 
-
+    #[test]
     fn serialize_signature() {
         let signature = SignaturePacket {
             version: Version::V4,
@@ -383,11 +409,33 @@ mod test {
             ),
             hash_algo: HashAlgo::SHA2_256,
             subpackets: vec![
-                SignatureSubpackets::CreationTime(Duration::from_secs(0x60d985ae))
-
+                SignatureSubpackets::CreationTime(Duration::from_secs(0x60d985ae)),
+                SignatureSubpackets::IssuerFingerprint(&[0x7d, 0x06, 0x3e, 0x54, 0xf2, 
+                                                         0xe9, 0xa3, 0x9e, 0x8f, 0x69,
+                                                         0x7e, 0xcf, 0xe3, 0x54, 0x2a, 
+                                                         0xe0, 0x84, 0xdb, 0x79, 0x6c]),
+                SignatureSubpackets::IssuerKeyID(0xE3542AE084DB796C)
             ],
-            hash: 0x0000,
+            hash: 0xfdcb
         };
+
+        let binary_signature = signature.serialize();
+        let sample_signature = &[ 0x88, 0x75, 0x04, 0x00, 0x11, 0x08, 0x00, 0x1d, 0x16, 
+            0x21, 0x04, 0x7d, 0x06, 0x3e, 0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69,
+            0x7e, 0xcf, 0xe3, 0x54, 0x2a, 0xe0, 0x84, 0xdb, 0x79, 0x6c, 0x05, 0x02, 
+            0x60, 0xd9, 0x85, 0xae, 0x00, 0x0a, 0x09, 0x10, 0xe3, 0x54, 0x2a, 0xe0, 
+            0x84, 0xdb, 0x79, 0x6c, 0xfd, 0xcb, 0x00, 0xff, 0x6a, 0x39, 0xfd, 0x93, 
+            0x6c, 0xcb, 0xb6, 0x56, 0xd3, 0x2c, 0x39, 0x1a, 0xd8, 0xb0, 0xa1, 0x78, 
+            0x7d, 0x89, 0x87, 0x19, 0xd7, 0x7f, 0x50, 0x54, 0xb2, 0xcf, 0x87, 0x6c, 
+            0x00, 0x38, 0x72, 0x94, 0x00, 0xff, 0x6b, 0xee, 0x77, 0xd9, 0x82, 0xf2, 
+            0x12, 0x82, 0xcb, 0x2e, 0x68, 0x9a, 0x23, 0xf9, 0xff, 0xc8, 0x1d, 0xa2, 
+            0x95, 0xae, 0x2f, 0x6d, 0x9a, 0x6b, 0xd2, 0xa5, 0x3f, 0x96, 0x56, 0xea, 
+            0x10, 0xae
+        ];
+
+        assert_eq!(binary_signature.len(), sample_signature.len());
+        assert_eq!(binary_signature, sample_signature);
+
     }
 
     #[test]
