@@ -37,6 +37,13 @@ fn set(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) -> Jso
     Json(Ok(()))
 }
 
+#[post("/blame", format = "json", data = "<request>")]
+fn blame(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) {
+
+
+}
+
+
 #[post("/signupkeygen", format = "json")]
 fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<PartySignup> {
     let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
@@ -125,7 +132,7 @@ fn main() {
     }
 
     rocket::ignite()
-        .mount("/", routes![get, set, signup_keygen, signup_sign])
+        .mount("/", routes![get, set, signup_keygen, signup_sign, blame])
         .manage(db_mtx)
         .launch();
 }

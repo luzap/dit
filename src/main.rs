@@ -2,7 +2,7 @@ mod protocol;
 mod channel;
 mod pgp;
 mod app;
-
+mod config;
 
 use protocol::{dkg};
 use curv::elliptic::curves::traits::*;
@@ -14,9 +14,13 @@ use std::io::Error;
 
 
 fn main() -> Result<(), Error> {
-
     let app = app::build_app();
-    
+    if let Some(_) = config::find_project_config(None) {
+        println!("Detected threshold signature server config");
+        return Ok(());
+    }
+    // TODO Check if the user is local or global
+
     match app.get_matches().subcommand() {
         ("keygen", Some(keygen_matches)) => {
             println!("Starting keygen with args {:?}", keygen_matches)
