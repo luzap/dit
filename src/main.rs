@@ -10,14 +10,13 @@ use curv::arithmetic::Converter;
 use std::io::Write;
 use std::fs;
 use pgp::Packet;
-use std::io::Error;
 
 
-fn main() -> Result<(), Error> {
+fn main() {
     let app = app::build_app();
-    if let Some(_) = config::find_project_config(None) {
+    if config::find_project_config(None).is_some() {
         println!("Detected threshold signature server config");
-        return Ok(());
+        return;
     }
     // TODO Check if the user is local or global
 
@@ -33,9 +32,6 @@ fn main() -> Result<(), Error> {
             app::git_subcommand(other, args);
         }
     };
-
-
-
     /* let keys: protocol::PartyKeyPair = match dkg::distributed_keygen() {
         Ok(keys) => keys,
         Err(e) => panic!("An error occurred: {:?}", e)
@@ -57,7 +53,4 @@ fn main() -> Result<(), Error> {
                 .write(true)
                 .open("test.pgp");
     let _ = file.unwrap().write_all(&buffer); */
-
-
-    Ok(())
 }

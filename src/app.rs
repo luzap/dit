@@ -29,17 +29,17 @@ pub fn build_app() -> App<'static, 'static> {
     app
 }
 
-pub fn keygen_subcommand<'a>(args: Option<ArgMatches<'a>>) {
+pub fn keygen_subcommand(args: Option<ArgMatches>) {
     
 
 }
 
-pub fn rotate_subcommand<'a>(args: Option<ArgMatches<'a>>) {
+pub fn rotate_subcommand(args: Option<ArgMatches>) {
 
 
 }
 
-pub fn tag_subcommand<'a>(args: Option<ArgMatches<'a>>) {
+pub fn tag_subcommand(args: Option<ArgMatches>) {
     // TODO Check if it has to be distributed
 
 
@@ -53,14 +53,14 @@ pub fn get_help_message() -> String {
     String::from("")
 }
 
-pub fn git_subcommand<'a>(subcommand: &'a str, args: Option<&ArgMatches<'a>>) {
+pub fn git_subcommand(subcommand: &str, args: Option<&ArgMatches>) {
     let mut git_child = Command::new(GIT);
     let git_owning = git_child
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit());
 
     // Displays a help message
-    if subcommand == "" {
+    if subcommand.is_empty() {
         git_owning.spawn().unwrap().wait().unwrap();
         return;
     }

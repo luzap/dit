@@ -32,14 +32,14 @@ pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8> {
         encoded.push(BIN_TO_ASCII[((((buffer[len] << 4) & 0o60)|
                      ((buffer[len+1] >> 4) & 0o17)) & 0o77) as usize]);
         encoded.push(BIN_TO_ASCII[(((buffer[len+1] << 2) & 0o74)) as usize]);
-        encoded.push('=' as u8);
+        encoded.push(b'=');
     }
 
     if rem == 1 {
         encoded.push(BIN_TO_ASCII[((buffer[len] >> 2) & 0o77) as usize]);
         encoded.push(BIN_TO_ASCII[((buffer[len] << 4) & 0o60) as usize]);
-        encoded.push('=' as u8);
-        encoded.push('=' as u8);
+        encoded.push(b'=');
+        encoded.push(b'=');
 
     }
 
@@ -52,13 +52,13 @@ fn get_mpi_bits(mpi: &[u8]) -> u16 {
     count
 }
 
-fn format_subpacket_length<'a>(buffer: &'a mut [u8]) -> &'a [u8] {
+fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     let fst_ind = buffer.partition_point(|&x| x == 0);
     let fst_byte = buffer[fst_ind];
 
     if fst_byte < 192 {
         &buffer[fst_ind..fst_ind+1]
-    } else if fst_byte >= 192 && fst_byte < 255 {
+    } else if (192..255).contains(&fst_byte) {
         buffer[fst_ind] = fst_byte - 192;
         buffer[fst_ind+1] += 192;
         &buffer[fst_ind..]
@@ -342,17 +342,17 @@ impl<'a> SignaturePacket<'a> {
 
 
     fn get_hashable(&self) -> Vec<u8> {
-        let mut contents: Vec<u8> = Vec::new();
+        let mut contents = vec![
+            self.version as u8, 
+            self.sigtype as u8, 
+            match self.pubkey_algo {
+                PKAlgo::DSA(_, _) => 0x11,
+                PKAlgo::ECDSA(_, _) => 0x13,
+            },
 
-        contents.push(self.version as u8);
-        contents.push(self.sigtype as u8);
-        
-        contents.push(match self.pubkey_algo {
-            PKAlgo::DSA(_, _) => 0x11,
-            PKAlgo::ECDSA(_, _) => 0x13,
-        });
+            self.hash_algo as u8
+        ];
 
-        contents.push(self.hash_algo as u8);
         
         let mut subpacket_count: u16 = 0;
        
