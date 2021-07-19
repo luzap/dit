@@ -1,5 +1,4 @@
 use std::{time, thread};
-use reqwest;
 
 use serde::{Serialize, Deserialize};
 
@@ -7,9 +6,9 @@ pub mod traits;
 
 #[derive(Debug)]
 pub enum Errors {
-    DeserializationError,
-    ResponseError,
-    SendError
+    Deserialization,
+    Response,
+    Send
 }
 
 pub type Key = String;
@@ -79,7 +78,7 @@ impl Channel {
     ) -> Result<(), ()> {
         let key = format!("{}-{}-{}", party_num, round, self.uuid);
         let entry = Entry {
-            key: key.clone(),
+            key,
             value: data,
         };
 
@@ -97,7 +96,7 @@ impl Channel {
         let key = format!("{}-{}-{}-{}", party_from, party_to, round, self.uuid);
 
         let entry = Entry {
-            key: key.clone(),
+            key,
             value: data,
         };
 
@@ -166,17 +165,17 @@ impl Channel {
 
         let res_body: String = match self.postb("signupkeygen", key) {
             Some(res) => res,
-            None => return Err(Errors::ResponseError)
+            None => return Err(Errors::Response)
         };
 
         match serde_json::from_str(&res_body) {
             Ok(PartySignup { uuid, number } ) => {
                 self.uuid = uuid;
-                return Ok(number)
+                Ok(number)
             },
-            Err(_) => return Err(Errors::DeserializationError)
+            Err(_) => Err(Errors::Deserialization)
 
-        };
+        }
     }
 
     pub fn signup_sign(&mut self) -> Result<u16, Errors> {
@@ -184,15 +183,15 @@ impl Channel {
 
         let res_body: String = match self.postb("signupsign", key) {
             Some(res) => res,
-            None => return Err(Errors::ResponseError)
+            None => return Err(Errors::Response)
         };
 
         match serde_json::from_str(&res_body) {
             Ok(PartySignup { uuid, number } ) => {
                 self.uuid = uuid;
-                return Ok(number)
+                Ok(number)
             },
-            Err(_) => return Err(Errors::DeserializationError)
-        };
+            Err(_) => Err(Errors::Deserialization)
+        }
     }
 }

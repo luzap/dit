@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 // TODO How do we output the correct help messages? Need to have the output
 // saved somehow, but not sure how that would work, all things considered.
 // Might want to use something like lazy_static!{}
-const GIT: &'static str = "git"; 
+const GIT: &str = "git"; 
 
 
 

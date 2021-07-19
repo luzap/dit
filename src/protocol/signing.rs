@@ -42,7 +42,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
 
     let party_num_int = match channel.signup_sign() {
         Ok(i) => i,
-        Err(_) => return Err(Errors::ResponseError),
+        Err(_) => return Err(Errors::Response),
     };
 
     // round 0: collect signers IDs
@@ -108,7 +108,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     for i in 1..THRESHOLD + 2 {
         if i == party_num_int {
             bc1_vec.push(res_stage1.bc1.clone());
-            g_w_i_vec.push(res_stage1.sign_keys.g_w_i.clone());
+            g_w_i_vec.push(res_stage1.sign_keys.g_w_i);
             m_a_vec.push(res_stage1.m_a.0.clone());
         } else {
             let (bc1_j, m_a_party_j, g_w_i): (SignBroadcastPhase1, MessageA, GE) =
@@ -123,9 +123,9 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     assert_eq!(signers_vec.len(), bc1_vec.len());
 
     let input_stage2 = SignStage2Input {
-        m_a_vec: m_a_vec.clone(),
-        gamma_i: res_stage1.sign_keys.gamma_i.clone(),
-        w_i: res_stage1.sign_keys.w_i.clone(),
+        m_a_vec: m_a_vec,
+        gamma_i: res_stage1.sign_keys.gamma_i,
+        w_i: res_stage1.sign_keys.w_i,
         ek_vec: keypair.paillier_key_vec_s.clone(),
         index: (party_num_int - 1) as usize,
         l_ttag: signers_vec.len() as usize,
@@ -177,12 +177,12 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
 
     let input_stage3 = SignStage3Input {
         dk_s: keypair.party_keys_s.dk.clone(),
-        k_i_s: res_stage1.sign_keys.k_i.clone(),
+        k_i_s: res_stage1.sign_keys.k_i,
         m_b_gamma_s: m_b_gamma_rec_vec.clone(),
-        m_b_w_s: m_b_w_rec_vec.clone(),
+        m_b_w_s: m_b_w_rec_vec,
         index_s: (party_num_int - 1) as usize,
         ttag_s: signers_vec.len(),
-        g_w_i_s: g_w_i_vec.clone(),
+        g_w_i_s: g_w_i_vec,
     };
 
     let res_stage3 = sign_stage3(&input_stage3).expect("Sign stage 3 failed.");
@@ -199,10 +199,10 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     }
 
     let input_stage4 = SignStage4Input {
-        alpha_vec_s: alpha_vec.clone(),
-        beta_vec_s: beta_vec.clone(),
-        miu_vec_s: miu_vec.clone(),
-        ni_vec_s: ni_vec.clone(),
+        alpha_vec_s: alpha_vec,
+        beta_vec_s: beta_vec,
+        miu_vec_s: miu_vec,
+        ni_vec_s: ni_vec,
         sign_keys_s: res_stage1.sign_keys.clone(),
     };
     let res_stage4 = sign_stage4(&input_stage4).expect("Sign Stage4 failed.");
@@ -226,7 +226,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     let mut j = 0;
     for i in 1..THRESHOLD + 2 {
         if i == party_num_int {
-            delta_i_vec.push(res_stage4.delta_i.clone());
+            delta_i_vec.push(res_stage4.delta_i);
             decom1_vec.push(res_stage1.decom1.clone());
         } else {
             let (decom_l, delta_l): (SignDecommitPhase1, FE) =
@@ -239,9 +239,9 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
 
     let delta_inv_l = SignKeys::phase3_reconstruct_delta(&delta_i_vec);
     let input_stage5 = SignStage5Input {
-        m_b_gamma_vec: m_b_gamma_rec_vec.clone(),
-        delta_inv: delta_inv_l.clone(),
-        decom_vec1: decom1_vec.clone(),
+        m_b_gamma_vec: m_b_gamma_rec_vec,
+        delta_inv: delta_inv_l,
+        decom_vec1: decom1_vec,
         bc1_vec: bc1_vec.clone(),
         index: (party_num_int - 1) as usize,
         sign_keys: res_stage1.sign_keys.clone(),
@@ -251,7 +251,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     assert!(channel.broadcast(
         party_num_int,
         "round5",
-        serde_json::to_string(&(res_stage5.R_dash.clone(), res_stage5.R.clone(),)).unwrap(),
+        serde_json::to_string(&(res_stage5.R_dash, res_stage5.R,)).unwrap(),
     )
     .is_ok());
 
@@ -267,8 +267,8 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
     let mut j = 0;
     for i in 1..THRESHOLD + 2 {
         if i == party_num_int {
-            R_vec.push(res_stage5.R.clone());
-            R_dash_vec.push(res_stage5.R_dash.clone());
+            R_vec.push(res_stage5.R);
+            R_dash_vec.push(res_stage5.R_dash);
         } else {
             let (R_dash, R): (GE, GE) = serde_json::from_str(&round5_ans_vec[j]).unwrap();
             R_vec.push(R);
@@ -279,26 +279,26 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
 
     let message_bn = HSha256::create_hash(&[&BigInt::from_bytes(message)]);
     let input_stage6 = SignStage6Input {
-        R_dash_vec: R_dash_vec.clone(),
-        R: res_stage5.R.clone(),
+        R_dash_vec,
+        R: res_stage5.R,
         m_a: res_stage1.m_a.0.clone(),
         e_k: keypair.paillier_key_vec_s[signers_vec[(party_num_int - 1) as usize] as usize].clone(),
-        k_i: res_stage1.sign_keys.k_i.clone(),
+        k_i: res_stage1.sign_keys.k_i,
         randomness: res_stage1.m_a.1.clone(),
         party_keys: keypair.party_keys_s.clone(),
         h1_h2_N_tilde_vec: keypair.h1_h2_N_tilde_vec_s.clone(),
         index: (party_num_int - 1) as usize,
         s: signers_vec.clone(),
-        sigma: res_stage4.sigma_i.clone(),
-        ysum: keypair.y_sum_s.clone(),
-        sign_key: res_stage1.sign_keys.clone(),
+        sigma: res_stage4.sigma_i,
+        ysum: keypair.y_sum_s,
+        sign_key: res_stage1.sign_keys,
         message_bn: message_bn.clone(),
     };
     let res_stage6 = sign_stage6(&input_stage6).expect("stage6 sign failed.");
     assert!(channel.broadcast(
         party_num_int,
         "round6",
-        serde_json::to_string(&res_stage6.local_sig.clone()).unwrap(),
+        serde_json::to_string(&res_stage6.local_sig).unwrap(),
     )
     .is_ok());
     let round6_ans_vec = channel.poll_for_broadcasts(
@@ -320,7 +320,7 @@ pub fn distributed_sign(message_str: String, keypair: PartyKeyPair) -> Result<Si
         }
     }
     let input_stage7 = SignStage7Input {
-        local_sig_vec: local_sig_vec.clone(),
+        local_sig_vec: local_sig_vec,
         ysum: keypair.y_sum_s.clone(),
     };
     let res_stage7 = sign_stage7(&input_stage7).expect("sign stage 7 failed");

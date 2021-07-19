@@ -19,7 +19,7 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
     let mut channel = channel::Channel::new();
     let party_num_int = match channel.signup_keygen() {
         Ok(i) => i,
-        Err(_) => return Err(Errors::ResponseError),
+        Err(_) => return Err(Errors::Response)
     };
 
     let delay = time::Duration::from_millis(25);
@@ -35,7 +35,7 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
         serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
     ) {
             Ok(()) => {},
-            Err(()) => return Err(Errors::SendError)
+            Err(()) => return Err(Errors::Send)
         };
     
     let round1_ans_vec = channel.poll_for_broadcasts(
@@ -58,7 +58,7 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
         serde_json::to_string(&res_stage1.decom1_l).unwrap(),
     ) {
             Ok(()) => {},
-            Err(()) => return Err(Errors::SendError)
+            Err(()) => return Err(Errors::Send)
         };
 
     let round2_ans_vec = channel.poll_for_broadcasts(
@@ -183,7 +183,7 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
 
     let input_stage4 = KeyGenStage4Input {
         params_s: params.clone(),
-        dlog_proof_vec_s: dlog_proof_vec.clone(),
+        dlog_proof_vec_s: dlog_proof_vec,
         y_vec_s: point_vec.clone(),
     };
 
@@ -198,10 +198,10 @@ pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
         .collect::<Vec<DLogStatement>>();
 
     Ok(PartyKeyPair {
-        party_keys_s: res_stage1.party_keys_l.clone(),
-        shared_keys: res_stage3.shared_keys_s.clone(),
+        party_keys_s: res_stage1.party_keys_l,
+        shared_keys: res_stage3.shared_keys_s,
         party_num_int_s: party_num_int,
-        vss_scheme_vec_s: vss_scheme_vec.clone(),
+        vss_scheme_vec_s: vss_scheme_vec,
         paillier_key_vec_s: paillier_key_vec,
         y_sum_s: y_sum,
         h1_h2_N_tilde_vec_s: h1_h2_N_tilde_vec,

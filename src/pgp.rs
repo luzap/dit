@@ -31,7 +31,7 @@ pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8> {
         encoded.push(BIN_TO_ASCII[((buffer[len] >> 2) & 0o77) as usize]);
         encoded.push(BIN_TO_ASCII[((((buffer[len] << 4) & 0o60)|
                      ((buffer[len+1] >> 4) & 0o17)) & 0o77) as usize]);
-        encoded.push(BIN_TO_ASCII[(((buffer[len+1] << 2) & 0o74)) as usize]);
+        encoded.push(BIN_TO_ASCII[((buffer[len+1] << 2) & 0o74) as usize]);
         encoded.push(b'=');
     }
 
