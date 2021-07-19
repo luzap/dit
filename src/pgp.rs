@@ -1,9 +1,6 @@
 // TODOs:
-// 1. Move from using per-message structs to a generic struct and then use the builder
-// pattern to get it
-// 2. Move the serialization method to `.as_bytes()`, which seems to be the standard 
-// naming convention for this sort of thing
-// 3. (Optional) Could change some of the functions to more generic versions, should it be needed
+// 1. Create a `Writer` struct that would take care of keeping track of the current 
+// writes. This should wrap a vector with some given capacity
 
 use std::time::{Duration, SystemTime};
 use std::ops::Index;
@@ -55,14 +52,19 @@ fn get_mpi_bits(mpi: &[u8]) -> u16 {
     count
 }
 
+fn format_subpacket_length<'a>(buffer: &'a mut [u8]) -> &'a [u8] {
+    let fst_ind = buffer.partition_point(|&x| x == 0);
+    let fst_byte = buffer[fst_ind];
 
-fn format_mpi(mpi: &[u8]) -> Vec<u8> { 
-    let mut output: Vec<u8> = Vec::new();
-    let bits = get_mpi_bits(mpi).to_be_bytes();
-    output.extend(bits);
-    output.extend(mpi);
-
-    output
+    if fst_byte < 192 {
+        &buffer[fst_ind..fst_ind+1]
+    } else if fst_byte >= 192 && fst_byte < 255 {
+        buffer[fst_ind] = fst_byte - 192;
+        buffer[fst_ind+1] += 192;
+        &buffer[fst_ind..]
+    } else {
+        &buffer[..]
+    }
 }
 
 
@@ -132,6 +134,8 @@ enum HashAlgo {
     SHA3_512 = 14
 }
 
+// Note: we can compute the issuer fingerprint by computing the hash of the
+// public key as specified in RFC 4880, Section 12.2
 enum SignatureSubpackets<'a> {
     CreationTime{ id: u8, hashable: bool, time: Duration},
     IssuerFingerprint {id: u8, hashable: bool, version: Version, fingerprint: &'a [u8]},
@@ -234,7 +238,7 @@ impl<'a> SignaturePacket<'a> {
     }
 }
 
-struct PKPacket<'a> { 
+pub struct PKPacket<'a> { 
     version: Version,
     creation_time: Duration,
     days_until_expiration: u16,
@@ -281,28 +285,41 @@ impl Index<CurveOID> for CurveRepr {
     }
 }
 
-
+// TODO Note that there might have to be a specific encoding for the EC point
+// In particular, there has to be the byte 0x04 and then the concatenation of the 
+// x and y coordinates. The encoding of the values themselves also has to be very 
+// specific
 enum PublicKey<'a> {
-    ECDSA(CurveOID, &'a [u8])
+    ECDSA(CurveOID, &'a [u8], &'a [u8])
+}
+
+impl<'a> PublicKey<'a> {
+    fn as_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        match self {
+            PublicKey::ECDSA(oid, key_x, key_y) => {
+                buffer.push(CURVE_REPR[*oid].len() as u8);
+                buffer.extend(CURVE_REPR[*oid]);
+                // Padding value of some sort 
+                buffer.push(0x04);
+
+                let x_len = get_mpi_bits(key_x);
+                buffer.extend(x_len.to_be_bytes());
+                buffer.extend_from_slice(key_x);
+
+                let y_len = get_mpi_bits(key_y);
+                buffer.extend(y_len.to_be_bytes());
+                buffer.extend_from_slice(key_y);
+            }
+        }
+        buffer
+    }
 }
 
 
+
+
 impl<'a> SignaturePacket<'a> {
-    fn serialize_radix64(&self) -> Vec<u8> {
-        let binary = self.as_bytes();
-        let mut armor = Vec::new();
-
-        // Armor header line, with a string surrounded by five dashes on either size of
-        // the text line (Section 6.2)
-        // The newline has to be part of the signature
-        armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n").as_bytes());
-
-        armor.extend(data_to_radix64(&binary));
-        armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
-
-        armor
-    }
-
 /* A V4 signature hashes the packet body starting from its first field, the version number, through the end of the hashed subpacket data and a final extra trailer. Thus, the hashed fields are:
 
     the signature version (0x04),
@@ -354,6 +371,29 @@ impl<'a> SignaturePacket<'a> {
     }
 }
 
+
+fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> {
+    let mut hdr = Vec::new();
+
+    let mut header: u8 = 0b1000_0000;
+    header |= (packet_type as u8) << PACKET_TAG_OFFSET;
+
+    // TODO Move this to a separate function
+    let leading_zeroes = buffer.len().to_be_bytes().partition_point(|&x| x == 0);
+    let size_bytes = &buffer.len().to_be_bytes()[leading_zeroes..];
+
+    header |= match size_bytes.len() as u8 {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        _ => unreachable!()
+    };
+    hdr.push(header);
+    hdr.extend_from_slice(size_bytes);
+
+    hdr
+}
+
 #[repr(u8)]
 enum PacketHeader {
     Signature = 0x02,
@@ -362,22 +402,16 @@ enum PacketHeader {
 
 const PACKET_TAG_OFFSET: u8 = 2; 
 
-fn format_subpacket_length<'a>(buffer: &'a mut [u8]) -> &'a [u8] {
-    let fst_ind = buffer.partition_point(|&x| x == 0);
-    let fst_byte = buffer[fst_ind];
-
-    if fst_byte < 192 {
-        &buffer[fst_ind..fst_ind+1]
-    } else if fst_byte >= 192 && fst_byte < 255 {
-        buffer[fst_ind] = fst_byte - 192;
-        buffer[fst_ind+1] += 192;
-        &buffer[fst_ind..]
-    } else {
-        &buffer[..]
-    }
+#[repr(u8)]
+enum ECPointCompression {
+    Uncompressed = 0x04,
+    NativePointFormat = 0x40,
+    OnlyXCoord = 0x41,
+    OnlyYCoord = 0x42,
 }
 
-trait Packet {
+
+pub trait Packet {
     fn as_bytes(&self) -> Vec<u8>;
 
     // All of the implementations for this will be identical, so this should be perfectly fine
@@ -397,80 +431,72 @@ trait Packet {
     }
 }
 
-
-#[allow(unused_variables)]
-#[allow(unused_mut)]
 impl<'a> Packet for SignaturePacket<'a> {
     fn as_bytes(&self) -> Vec<u8> {
         let mut contents = self.get_hashable();
-        let mut size = contents.len();
         
         let mut unhashed: Vec<u8> = Vec::new();
-        // TODO Match all of the hashable subpackets here
         for subpacket in self.subpackets.iter() {
             if !subpacket.hashable() {
-                let subpacket_bytes = subpacket.as_bytes();
-                size += subpacket_bytes.len();
                 unhashed.extend(subpacket.as_bytes());
             }
         }
-
         contents.extend((unhashed.len() as u16).to_be_bytes());
         contents.extend(&unhashed);
         contents.extend(self.hash.to_be_bytes());
-        // Hash is two bytes and the hash length is two bytes
-        size += 4; 
 
         // Figuring out the proper MPI sizes to end off the signature packet
         let mpis = self.pubkey_algo.as_bytes();
-        size += mpis.len();
         contents.extend(mpis);
         
-        let mut header: u8 = 0b1000_0000;
-        header |= (PacketHeader::Signature as u8) << PACKET_TAG_OFFSET;
+        // TODO Figure out a nicer way of writing this
+        let mut header = calculate_packet_header(&contents, PacketHeader::Signature);
+        header.extend(contents);
 
-        // TODO Move this to a separate function
-        let leading_zeroes = size.to_be_bytes().partition_point(|&x| x == 0);
-        let size_bytes = &size.to_be_bytes()[leading_zeroes..];
-    
-        header |= match size_bytes.len() as u8 {
-            1 => 0,
-            2 => 1,
-            4 => 2,
-            _ => unreachable!()
+        header
+    }
+}
+
+
+impl<'a> PKPacket<'a> {
+    pub fn new(x: &'a [u8], y: &'a [u8]) -> PKPacket<'a> {
+        let epoch = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n,
+            Err(e) => panic!("Error: {}", e),
         };
 
-        let mut temp = Vec::new();
-        // TODO What is this value supposed to be?
-        temp.push(header);
-        temp.extend_from_slice(size_bytes);
-        temp.extend(contents);
-
-        temp
+        PKPacket {
+            version: Version::V4,
+            creation_time: epoch,
+            days_until_expiration: 0,
+            public_key: PublicKey::ECDSA(CurveOID::P256, x, y)
+        }
     }
 }
 
 
 impl Packet for PKPacket<'_> {
-    fn as_bytes(&self) -> Vec<u8>{
-        let mut binary = Vec::new();
+     fn as_bytes(&self) -> Vec<u8>{
+        let mut buffer = Vec::new();
+        match self.version { 
+            Version::V4 => {
+                buffer.push(self.version as u8);
+                let creation_time = &self.creation_time.as_secs().to_be_bytes()[4..];
+                buffer.extend(creation_time);
 
-        binary.push(self.version as u8);
-        let creation_time = self.creation_time.as_secs().to_be_bytes();
-        binary.extend(&creation_time);
+                buffer.push(match self.public_key {
+                    PublicKey::ECDSA(_, _, _) => 0x13
+                });
 
-        match self.public_key {
-            PublicKey::ECDSA(oid, key) => {
-                binary.push(CURVE_REPR[oid].len() as u8);
-                binary.extend(CURVE_REPR[oid]);
-                let y_len = get_mpi_bits(key);
-                binary.extend(y_len.to_be_bytes());
+                buffer.extend(self.public_key.as_bytes());
             }
+            _ => unimplemented!()
         }
-        binary  
+        let mut header = calculate_packet_header(&buffer, PacketHeader::PublicKey);
+        header.extend(buffer);
+
+        header
     }
-
-
 }
 
 #[cfg(test)]
@@ -490,7 +516,7 @@ mod test {
 
 
     #[test]
-    fn mpi_impl_bitlength() {
+    fn mpi_complex_bitlength() {
         // Taken from a correctly formed OpenPGP packet used for testing RFC compliance
         assert_eq!(255, get_mpi_bits(&[
                   0x6b, 0xee, 0x77, 0xd9, 0x82, 0xf2, 0x12, 0x82, 0xcb, 0x2e, 
@@ -501,7 +527,7 @@ mod test {
     }
 
     #[test]
-    fn serialize_signature() {
+    fn signature_serialization() {
         let signature = SignaturePacket {
             version: Version::V4,
             sigtype: SigType::Binary,
@@ -541,10 +567,6 @@ mod test {
             0x10, 0xae
         ];
 
-        println!("{:02X?}", binary_signature);
-        println!("{:02X?}", sample_signature);
-
-        assert_eq!(binary_signature.len(), sample_signature.len());
         assert_eq!(binary_signature, sample_signature);
     }
 
@@ -560,7 +582,6 @@ mod test {
         assert_eq!(vec![70, 80, 117, 99, 65, 57, 107, 61],
             data_to_radix64(&[0x14,0xFB,0x9C,0x03,0xD9]));
     }
-
 
 }
 
