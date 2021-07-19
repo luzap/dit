@@ -3,7 +3,6 @@ mod channel;
 mod pgp;
 mod app;
 
-use std::process::{Command, Stdio};
 
 use protocol::{dkg};
 use curv::elliptic::curves::traits::*;
@@ -13,27 +12,23 @@ use std::fs;
 use pgp::Packet;
 use std::io::Error;
 
+
 fn main() -> Result<(), Error> {
+
     let app = app::build_app();
     
-    let matches = app.get_matches();
-
-    match matches.subcommand() {
+    match app.get_matches().subcommand() {
         ("keygen", Some(keygen_matches)) => {
             println!("Starting keygen with args {:?}", keygen_matches)
         },
         ("tag", Some(tag_matches)) => {
             println!("Starting tagging with args: {:?}", tag_matches)
         },
-        (other, _) => {
-            let _ = Command::new("git").arg(other)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .spawn().unwrap().wait().unwrap();
 
+        (other, args) => {
+            app::git_subcommand(other, args);
         }
-
-    }
+    };
 
 
 
