@@ -1,6 +1,9 @@
 use clap::{App, AppSettings, Arg, ArgMatches, crate_version};
 use std::process::{Command, Stdio};
 
+use crate::protocol;
+use crate::channel;
+
 // TODO Make this part of the config
 // TODO How do we output the correct help messages? Need to have the output
 // saved somehow, but not sure how that would work, all things considered.
@@ -29,9 +32,11 @@ pub fn build_app() -> App<'static, 'static> {
     app
 }
 
-pub fn keygen_subcommand(args: Option<ArgMatches>) {
-    
-
+pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Result<protocol::PartyKeyPair, channel::Errors> {
+    // TODO Get configs
+    // TODO Where are we storing these guys
+    // TODO How do we signal others that this is about to happen
+    protocol::dkg::distributed_keygen(config)
 }
 
 pub fn rotate_subcommand(args: Option<ArgMatches>) {
@@ -39,11 +44,10 @@ pub fn rotate_subcommand(args: Option<ArgMatches>) {
 
 }
 
-pub fn tag_subcommand(args: Option<ArgMatches>) {
+/* pub fn tag_subcommand(args: Option<ArgMatches>) -> Result<protocol::signing::SignatureRecId, channel::Errors>{
     // TODO Check if it has to be distributed
 
-
-}
+} */
 
 pub fn get_version_message() -> String {
     String::from("")

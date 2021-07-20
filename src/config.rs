@@ -3,27 +3,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ffi::OsString;
-use serde::{Deserialize};
 
-#[derive(Deserialize, Debug)]
-pub struct Server {
-    address: String,
-    port: u16,
-}
-
-// TODO Allow for Keybase integration here
-#[derive(Deserialize, Debug)]
-pub struct User {
-    full_name: String,
-    email: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct Config {
-    project: String,
-    server: Server,
-    user: Option<User>
-}
+use crate::utils;
 
 const CONFIG_FILE: &str = "config.toml";
 const CONFIG_DIR: &str = ".dit";
@@ -49,7 +30,7 @@ fn find_file_in_path(path: &Path, filename: OsString) -> PathBuf {
 }
 
 
-fn parse_config(path: &Path) -> Option<Config> {
+fn parse_config(path: &Path) -> Option<utils::Config> {
     let contents = fs::read_to_string(path).expect("No such file");
 
     match toml::from_str(&contents) {
@@ -59,7 +40,7 @@ fn parse_config(path: &Path) -> Option<Config> {
 }
 
 
-pub fn find_project_config(filename: Option<OsString>) -> Option<Config> {
+pub fn find_project_config(filename: Option<OsString>) -> Option<utils::Config> {
     // Check if the current path is a repo
     let repo_root = Command::new("git")
         .args(&["rev-parse", "--show-toplevel"]).output().unwrap();
@@ -78,7 +59,7 @@ pub fn find_project_config(filename: Option<OsString>) -> Option<Config> {
 }
 
 // TODO Loof at how this might be made better
-pub fn find_global_config(filename: Option<OsString>) -> Option<Config> {
+pub fn find_global_config(filename: Option<OsString>) -> Option<utils::Config> {
     // TODO Add OS-specific guards
     let home_path = match env::var("XDG_CONFIG_HOME") {
         Ok(dir) => dir,
@@ -104,12 +85,4 @@ pub fn find_global_config(filename: Option<OsString>) -> Option<Config> {
     parse_config(&config_file.as_path())
 }
 
-pub fn create_user_config() {
-
-}
-
-pub fn create_server_config() {
-
-}
-
-
+// TODO Add several commands to check the server

@@ -6,10 +6,8 @@ use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 
 use serde::{Serialize, Deserialize};
 
-
 pub mod dkg;
 pub mod signing;
-
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartyKeyPair {

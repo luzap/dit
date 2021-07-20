@@ -2,6 +2,7 @@ use std::time;
 use crate::protocol::PartyKeyPair;
 use crate::channel;
 use crate::channel::Errors;
+use crate::config::Config;
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{KeyGenBroadcastMessage1, KeyGenDecommitMessage1, Parameters};
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{KeyGenStage1Input, KeyGenStage2Input, KeyGenStage3Input, KeyGenStage4Input, keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4
@@ -13,7 +14,7 @@ use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen() -> Result<PartyKeyPair, Errors> {
+pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
 
     let params = Parameters { threshold: 2, share_count: 4 };
     let mut channel = channel::Channel::new();
