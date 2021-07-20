@@ -77,12 +77,31 @@ pub fn find_project_config(filename: Option<OsString>) -> Option<Config> {
     None
 }
 
+// TODO Loof at how this might be made better
+pub fn find_global_config(filename: Option<OsString>) -> Option<Config> {
+    // TODO Add OS-specific guards
+    let home_path = match env::var("XDG_CONFIG_HOME") {
+        Ok(dir) => dir,
+        Err(_) => env::var("HOME").unwrap()
+    };
 
-pub fn find_global_config(filename: Option<OsString>) {
-   let home_dir = Path::new(&env::var("XDG_CONFIG_HOME").unwrap_or_else(
-        |_| env::var("HOME").unwrap()
-    ));
-    let filename = filename.unwrap_or_else(|| OsString::from(CONFIG_FILE));
+    let config_file = filename.unwrap_or_else(|| OsString::from(CONFIG_FILE));
+
+    let config_dir = find_file_in_path(Path::new(&home_path),
+            OsString::from(CONFIG_DIR));
+   
+    // Checking for empty directory, even if this should not be happening
+    if config_dir.components().next().is_none() {
+        return None
+    }
+   
+    let config_file = find_file_in_path(&config_dir.as_path(), config_file);
+    
+    if config_file.components().next().is_none() {
+        return None
+    }
+
+    parse_config(&config_file.as_path())
 }
 
 pub fn create_user_config() {
