@@ -3,12 +3,19 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use rocket::{post, routes, State};
+use rocket::{post, routes, State, get};
 use rocket_contrib::json::Json;
+use rocket::http::Status;
 use uuid::Uuid;
 
 mod channel;
 use channel::{Entry, Index, Key, Params, PartySignup};
+
+
+#[get("/heartbeat")]
+fn heartbeat() -> Status {
+    Status::Ok
+}
 
 #[post("/get", format = "json", data = "<request>")]
 fn get(

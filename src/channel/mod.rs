@@ -38,34 +38,55 @@ pub struct Params {
 
 pub struct Channel {
     client: reqwest::Client,
-    uuid: String
+    uuid: String,
+    address: String,
+    retries: u8,
+    retry_delay: time::Duration
 }
 
 impl Channel {
     pub fn new() -> Channel {
         Channel {
             client: reqwest::Client::new(), 
-            uuid: "".to_string()
+            retries: 3,
+            uuid: "".to_string(),
+            address: String::from("http://localhost:8000"),
+            retry_delay: time::Duration::from_millis(250)
         }
     }
+
+    pub fn check_heartbeat(&self) -> bool {
+        
+        for _ in 1..self.retries {
+            let res = self.client
+                .post(&format!("{}/{}", self.address, "heartbeat"))
+                .send();
+            
+            if res.unwrap().status().is_success() {
+                return true;
+            }
+
+            thread::sleep(self.retry_delay);
+        }
+
+        false
+    }
+
 
     pub fn postb<T>(&self, path: &str, body: T) -> Option<String>
     where
         T: serde::ser::Serialize,
     {
-        let addr ="http://localhost:8000".to_string();
-        let retries = 3;
-        let retry_delay = time::Duration::from_millis(250);
-        for _i in 1..retries {
+        for _ in 1..self.retries {
             let res = self.client
-                .post(&format!("{}/{}", addr, path))
+                .post(&format!("{}/{}", self.address, path))
                 .json(&body)
                 .send();
 
             if let Ok(mut res) = res {
                 return Some(res.text().unwrap());
             }
-            thread::sleep(retry_delay);
+            thread::sleep(self.retry_delay);
         }
         None
     }
