@@ -7,8 +7,6 @@ edition = "2018"
 name = "server"
 path = "src/server.rs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 serde = "1"
 serde_json = "1"

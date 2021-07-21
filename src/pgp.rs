@@ -12,7 +12,7 @@ const BIN_TO_ASCII: [u8; 64] = [
     51, 52, 53, 54, 55, 56, 57, 43, 47
 ];
 
-pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8> {
+pub fn binary_to_radix64(buffer: &[u8]) -> Vec<u8> {
     let mut encoded: Vec<u8> = Vec::with_capacity((buffer.len()+2)/3 * 4 + 1);
     
     let rem = buffer.len() % 3;
@@ -45,6 +45,7 @@ pub fn data_to_radix64(buffer: &[u8]) -> Vec<u8> {
 
     encoded
 }
+
 
 fn get_mpi_bits(mpi: &[u8]) -> u16 {
     let mut count: u16 = 8u16 - mpi[0].leading_zeros() as u16;
@@ -424,7 +425,7 @@ pub trait Packet {
         // The newline has to be part of the signature
         armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n").as_bytes());
 
-        armor.extend(data_to_radix64(&binary));
+        armor.extend(binary_to_radix64(&binary));
         armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
 
         armor
@@ -574,15 +575,14 @@ mod test {
     fn radix64_basic_conversion() {
         // Test basic conversion
         assert_eq!(vec![70, 80, 117, 99, 65, 57, 108, 43],
-            data_to_radix64(&[0x14, 0xFB, 0x9C, 0x03, 0xD9, 0x7E]));
+            binary_to_radix64(&[0x14, 0xFB, 0x9C, 0x03, 0xD9, 0x7E]));
     }
 
     #[test]
     fn radix64_padded_conversion() {
         assert_eq!(vec![70, 80, 117, 99, 65, 57, 107, 61],
-            data_to_radix64(&[0x14,0xFB,0x9C,0x03,0xD9]));
+            binary_to_radix64(&[0x14,0xFB,0x9C,0x03,0xD9]));
     }
-
 }
 
 

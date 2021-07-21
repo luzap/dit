@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use crate::protocol;
 use crate::channel;
+use crate::utils::Config;
 
 // TODO Make this part of the config
 // TODO How do we output the correct help messages? Need to have the output

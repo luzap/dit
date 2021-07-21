@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 
 pub mod dkg;
 pub mod signing;
+use super::utils;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartyKeyPair {
