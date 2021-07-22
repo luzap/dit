@@ -15,6 +15,7 @@ rust-crypto = "0.2"
 libsecp256k1 = "0.3.2"
 hex = "0.4"
 toml = "0.5"
+lazy_static = "1.4.0"
 clap = { version = "2.33", features = ["yaml"] }
 curv = { package = "curv-kzen", version = "0.7", default-features = false }
 rocket = { version = "0.4.2", default-features = false }

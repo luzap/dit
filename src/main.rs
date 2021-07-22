@@ -1,5 +1,6 @@
 mod pgp;
 mod app;
+mod git;
 mod utils;
 mod config;
 mod channel;
@@ -13,6 +14,7 @@ fn main() {
         Some(config) => config,
         None => panic!("No config!")
     };
+    println!("HEAD is at {}", git::get_commit_hash("HEAD"));
 
 
     if config::find_project_config(None).is_some() {
@@ -28,7 +30,6 @@ fn main() {
             println!("Starting tagging with args: {:?}", tag_matches);
             // let tag_result = app::tag_subcommand(config, tag_matches);
         },
-
         (other, args) => {
             app::git_subcommand(other, args);
         }
