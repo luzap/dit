@@ -4,6 +4,7 @@
 
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
+use sha1::{Digest, Sha1};
 
 const BIN_TO_ASCII: [u8; 64] = [
     65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
@@ -73,9 +74,7 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum Version {
-    V3 = 3,
     V4 = 4,
-    V5 = 5,
 }
 
 #[repr(u8)]
@@ -200,7 +199,7 @@ impl<'a> SignatureSubpackets<'a> {
                 hashable: _,
                 time,
             } => {
-                let time = &time.as_secs().to_be_bytes()[4..];
+                let time = duration_to_bytes(*time);
                 buffer.extend(format_subpacket_length(&mut (time.len() + 1).to_be_bytes()));
                 // Creation time packet tag
                 buffer.push(*id);
@@ -340,21 +339,19 @@ impl<'a> PublicKey<'a> {
             PublicKey::ECDSA(oid, key_x, key_y) => {
                 buffer.push(CURVE_REPR[*oid].len() as u8);
                 buffer.extend(CURVE_REPR[*oid]);
-                // Padding value of some sort
-                buffer.push(0x04);
 
-                // The standard says that the whole thing should be encoded as an MPI,
-                // but it's not clear whether that means the __entire point__ should
-                // have a size field prepended to it. There might be some issues with
-                // versions here, as according to the GnuPG implementation, only
-                // V5 packets have the length of the public key material prepended,
-                // and otherwise it is ignored (look at gnupg/g10/build-packet.c). 
-                // Not entirely sure how the implementation then figures out the 
-                // length of the elements, but it might try to clamp the length of 
-                // one of them to the size of the field element (can't find any 
-                // corroboration for this)
-                buffer.extend_from_slice(key_x);
-                buffer.extend_from_slice(key_y);
+                // The MPI encoding of EC points is a little different. The point
+                // contains metadata on its own compression level by way of its
+                // first byte. This byte is concatenated with the x and y values
+                // of the EC point. This whole bitstring is then treated as the
+                // MPI and serialized into the key
+                let mut mpi = Vec::new();
+                mpi.push(0x04);
+                mpi.extend_from_slice(key_x);
+                mpi.extend_from_slice(key_y);
+                let bit_count = get_mpi_bits(&mpi);
+                buffer.extend(bit_count.to_be_bytes());
+                buffer.extend(mpi);
             }
         }
         buffer
@@ -362,8 +359,8 @@ impl<'a> PublicKey<'a> {
 }
 
 impl<'a> SignaturePacket<'a> {
-    /* A V4 signature hashes the packet body starting from its first field, the 
-     version number, through the end of the hashed subpacket data and a final 
+    /* A V4 signature hashes the packet body starting from its first field, the
+     version number, through the end of the hashed subpacket data and a final
      extra trailer. Thus, the hashed fields are:
       - the signature version (0x04),
       - the signature type,
@@ -372,7 +369,7 @@ impl<'a> SignaturePacket<'a> {
       - the hashed subpacket length,
       - the hashed subpacket body,
       - the two octets 0x04 and 0xFF,
-      - a four-octet big-endian number that is the length of the hashed data from the 
+      - a four-octet big-endian number that is the length of the hashed data from the
     Signature packet stopping right before the 0x04, 0xff octets. */
 
     fn get_trailer(&self) -> Vec<u8> {
@@ -493,6 +490,13 @@ impl<'a> Packet for SignaturePacket<'a> {
     }
 }
 
+fn duration_to_bytes<'a>(duration: Duration) -> Vec<u8> {
+    duration.as_secs().to_be_bytes()[4..].to_vec()
+}
+
+// TODO RFC 4880 mentions that "A primary key capable of making signatures SHOULD be 
+// accompanied by either a certification signature (on a User ID or User Attribute) or 
+// a signature directly on the key.", which we are not doing for the sake of brevity
 impl<'a> PKPacket<'a> {
     pub fn new(x: &'a [u8], y: &'a [u8]) -> PKPacket<'a> {
         let epoch = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -507,6 +511,43 @@ impl<'a> PKPacket<'a> {
             public_key: PublicKey::ECDSA(CurveOID::P256, x, y),
         }
     }
+    ///
+    ///
+    ///
+    fn get_hashed_subsection(&self) -> Vec<u8> {
+        let mut buffer = vec![
+            match self.version {
+                Version::V4 => 0x99,
+            },
+            0x00,
+            0x00,
+            self.version as u8,
+        ];
+        buffer.extend(duration_to_bytes(self.creation_time));
+        buffer.push(match self.public_key {
+            PublicKey::ECDSA(_, _, _) => 0x13,
+        });
+        buffer.extend(self.public_key.as_bytes());
+        // TODO Add size back in there
+
+
+        let mut hasher = Sha1::new();
+        hasher.update(buffer);
+        let result = hasher.finalize();
+
+        result.to_vec()
+    }
+
+    // The Key ID is unambiguously the lowest 64 bits of the key hash
+    pub fn keyid(&self) -> Vec<u8> {
+        let hash = self.get_hashed_subsection();
+        let len = hash.len();
+        hash[len-8..].to_vec()
+    }
+
+    pub fn fingerprint(&self) -> Vec<u8> {
+        self.get_hashed_subsection()
+    }
 }
 
 impl Packet for PKPacket<'_> {
@@ -515,8 +556,7 @@ impl Packet for PKPacket<'_> {
         match self.version {
             Version::V4 => {
                 buffer.push(self.version as u8);
-                let creation_time = &self.creation_time.as_secs().to_be_bytes()[4..];
-                buffer.extend(creation_time);
+                buffer.extend(duration_to_bytes(self.creation_time));
 
                 buffer.push(match self.public_key {
                     PublicKey::ECDSA(_, _, _) => 0x13,
@@ -557,6 +597,23 @@ mod test {
                 0x56, 0xea, 0x10, 0xae
             ])
         );
+    }
+
+    #[test]
+    fn public_key_serialization() {
+
+    }
+
+
+
+    #[test]
+    fn public_key_keyid() {
+
+    }
+
+    #[test]
+    fn public_key_fingerprint() {
+
     }
 
     #[test]
