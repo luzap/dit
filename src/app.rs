@@ -1,7 +1,6 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::process::{Command, Stdio};
 
-use lazy_static::lazy_static;
 use crate::channel;
 use crate::protocol;
 use crate::utils::Config;
@@ -12,8 +11,6 @@ use crate::git;
 // saved somehow, but not sure how that would work, all things considered.
 // Might want to use something like lazy_static!{}
 const GIT: &str = "git";
-
-
 
 pub fn build_app() -> App<'static, 'static> {
     let app = App::new("dit")

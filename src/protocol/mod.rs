@@ -21,4 +21,3 @@ pub struct PartyKeyPair {
     pub h1_h2_N_tilde_vec_s: Vec<DLogStatement>,
 }
 
-

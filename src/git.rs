@@ -1,8 +1,7 @@
 use std::process::Command;
 use std::time::Duration;
 use std::path::PathBuf;
-use std::fs::{File};
-use std::io::Write;
+use std::fs;
 
 // TODO This does not take into account windows \r
 // (though to be fair, not sure if this compiles on windows in the first place)
@@ -140,11 +139,11 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) {
         .args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body])
         .output() {
             Ok(hash) => hash,
-            Err(e) => println!("Error hashing object: {}", e)
+            Err(e) => panic!("Error hashing object: {}", e)
         };
 
     if !hash.stdout.is_empty() {
-        let hash_string = parse_cmd_output(hash);
+        let hash_string = parse_cmd_output(&hash.stdout);
         let mut tag_path = PathBuf::new();
         // TODO Since part of the path should be identical regardless of
         // repo, is there a better way to build the PathBuf?
@@ -153,7 +152,6 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) {
         tag_path.push("refs");
         tag_path.push("tags");
         tag_path.push(tag_name);
-        let tag_file = File::create(tag_path).unwrap();
-        tag_file.write_all(hash);
+        fs::write(tag_path, hash_string).expect("Could not write to file!");
     }
 }

@@ -1,26 +1,36 @@
-use std::time;
-use crate::protocol::PartyKeyPair;
+use super::utils::Config;
 use crate::channel;
 use crate::channel::Errors;
-use super::utils::Config;
+use crate::protocol::PartyKeyPair;
+use std::time;
 
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{KeyGenBroadcastMessage1, KeyGenDecommitMessage1, Parameters};
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{KeyGenStage1Input, KeyGenStage2Input, KeyGenStage3Input, KeyGenStage4Input, keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
+    keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4, KeyGenStage1Input,
+    KeyGenStage2Input, KeyGenStage3Input, KeyGenStage4Input,
+};
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{
+    KeyGenBroadcastMessage1, KeyGenDecommitMessage1, Parameters,
 };
 
-use paillier::EncryptionKey;
-use curv::elliptic::curves::secp256_k1::{FE, GE};
-use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
 use curv::cryptographic_primitives::proofs::sigma_dlog::DLogProof;
+use curv::cryptographic_primitives::secret_sharing::feldman_vss::VerifiableSS;
+use curv::elliptic::curves::secp256_k1::{FE, GE};
+use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
 pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
+    let params = Parameters {
+        threshold: 2,
+        share_count: 4,
+    };
+    let mut channel = channel::Channel::new(format!(
+        "http://{}:{}",
+        config.server.address, config.server.port
+    ));
 
-    let params = Parameters { threshold: 2, share_count: 4 };
-    let mut channel = channel::Channel::new();
     let party_num_int = match channel.signup_keygen() {
         Ok(i) => i,
-        Err(_) => return Err(Errors::Response)
+        Err(_) => return Err(Errors::Response),
     };
 
     let delay = time::Duration::from_millis(25);
@@ -35,17 +45,12 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         "round1",
         serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
     ) {
-            Ok(()) => {},
-            Err(()) => return Err(Errors::Send)
-        };
-    
-    let round1_ans_vec = channel.poll_for_broadcasts(
-        party_num_int,
-        params.share_count,
-        delay,
-        "round1",
-    );
+        Ok(()) => {}
+        Err(()) => return Err(Errors::Send),
+    };
 
+    let round1_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round1");
     let mut bc1_vec = round1_ans_vec
         .iter()
         .map(|m| serde_json::from_str::<KeyGenBroadcastMessage1>(m).unwrap())
@@ -58,16 +63,12 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         "round2",
         serde_json::to_string(&res_stage1.decom1_l).unwrap(),
     ) {
-            Ok(()) => {},
-            Err(()) => return Err(Errors::Send)
-        };
+        Ok(()) => {}
+        Err(()) => return Err(Errors::Send),
+    };
 
-    let round2_ans_vec = channel.poll_for_broadcasts(
-        party_num_int,
-        params.share_count,
-        delay,
-        "round2",
-    );
+    let round2_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round2");
 
     let mut decom1_vec = round2_ans_vec
         .iter()
@@ -97,22 +98,18 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
 
     for (k, i) in (1..=params.share_count).enumerate() {
         if i != party_num_int {
-            assert!(channel.sendp2p(
-                party_num_int,
-                i,
-                "round3",
-                serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
-            )
-            .is_ok());
+            assert!(channel
+                .sendp2p(
+                    party_num_int,
+                    i,
+                    "round3",
+                    serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
+                )
+                .is_ok());
         }
     }
     // get shares from other parties.
-    let round3_ans_vec = channel.poll_for_p2p(
-        party_num_int,
-        params.share_count,
-        delay,
-        "round3",
-    );
+    let round3_ans_vec = channel.poll_for_p2p(party_num_int, params.share_count, delay, "round3");
 
     // decrypt shares from other parties.
     let mut j = 0;
@@ -126,15 +123,17 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         }
     }
 
-    assert!(channel.broadcast(party_num_int, "round4",
-        serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
-    )
-    .is_ok());
+    assert!(channel
+        .broadcast(
+            party_num_int,
+            "round4",
+            serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
+        )
+        .is_ok());
 
     //get vss_scheme for others.
-    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, 
-        params.share_count, delay, "round4"
-    );
+    let round4_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round4");
 
     let mut j = 0;
     let mut vss_scheme_vec: Vec<VerifiableSS<GE>> = Vec::new();
@@ -157,18 +156,15 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
     };
     let res_stage3 = keygen_stage3(&input_stage3).expect("stage 3 keygen failed.");
     // round 5: send dlog proof
-    assert!(channel.broadcast(
-        party_num_int,
-        "round5",
-        serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
-    )
-    .is_ok());
-    let round5_ans_vec = channel.poll_for_broadcasts(
-        party_num_int,
-        params.share_count,
-        delay,
-        "round5",
-    );
+    assert!(channel
+        .broadcast(
+            party_num_int,
+            "round5",
+            serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
+        )
+        .is_ok());
+    let round5_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round5");
 
     let mut j = 0;
     let mut dlog_proof_vec: Vec<DLogProof<GE>> = Vec::new();
@@ -189,7 +185,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
     };
 
     let _ = keygen_stage4(&input_stage4).expect("keygen stage4 failed.");
-    //save key to file:
+
     let paillier_key_vec = (0..params.share_count)
         .map(|i| bc1_vec[i as usize].e.clone())
         .collect::<Vec<EncryptionKey>>();
