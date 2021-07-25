@@ -1,10 +1,16 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::process::{Command, Stdio};
+use std::fs;
 
 use crate::channel;
 use crate::protocol;
 use crate::utils::Config;
 use crate::git;
+use crate::pgp;
+use crate::pgp::Packet;
+
+use curv::elliptic::curves::traits::*;
+use curv::arithmetic::Converter;
 
 // TODO Make this part of the config
 // TODO How do we output the correct help messages? Need to have the output
@@ -21,6 +27,7 @@ pub fn build_app() -> App<'static, 'static> {
             App::new("keygen")
                 .help("Signal the start of the key generation protocol")
                 .arg(Arg::with_name("server").short("s"))
+                .arg(Arg::with_name("keyfile").short("k").number_of_values(1))
         )
         .subcommand(
             App::new("start-tag").help("Start distributed tagging")
@@ -33,7 +40,7 @@ pub fn build_app() -> App<'static, 'static> {
 pub fn keygen_subcommand(
     config: Config,
     args: Option<&ArgMatches<'_>>,
-) -> Result<protocol::PartyKeyPair, channel::Errors> {
+) -> Result<(), channel::Errors> {
     // TODO Get configs
     // TODO Where are we storing these guys
     // TODO How do we signal others that this is about to happen
@@ -42,8 +49,22 @@ pub fn keygen_subcommand(
         Ok(k) => k,
         Err(_) => unreachable!()
     };
-      
-    Ok(public_key)
+    
+    let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
+    let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
+
+    let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
+    let pub_key = pgp::PKPacket::new(pgp::PublicKey::ECDSA(pgp::CurveOID::Secp256k1, &x, &y), None);
+    let user_packet = pgp::UserID {
+        user: git::get_user_name(),
+        email: git::get_user_email()
+    };
+    let mut message = pub_key.as_bytes();
+    message.extend(user_packet.as_bytes());
+        
+    fs::write(key_file, message).expect("File already exists");
+
+    Ok(())
 }
 
 pub fn tag_subcommand(config: Config, args: Option<ArgMatches>) -> Result<(), channel::Errors> {

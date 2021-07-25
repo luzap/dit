@@ -119,7 +119,7 @@ impl Channel {
                 let index = Index { key };
                 loop {
                     // add delay to allow the server to process request:
-                    thread::sleep(self.retry_delay);
+                    thread::sleep(time::Duration::from_millis(25));
                     let res_body = self.postb("get", index.clone()).unwrap();
                     let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
                     if let Ok(answer) = answer {
@@ -146,7 +146,7 @@ impl Channel {
                 let index = Index { key };
                 loop {
                     // add delay to allow the server to process request:
-                    thread::sleep(self.retry_delay);
+                    thread::sleep(time::Duration::from_millis(25));
                     let res_body = self.postb("get", index.clone()).unwrap();
                     let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
                     if let Ok(answer) = answer {

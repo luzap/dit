@@ -49,7 +49,7 @@ pub fn get_commit_hash(commit: &str) -> String {
     String::from("")
 }
 
-fn get_user_name() -> String {
+pub fn get_user_name() -> String {
     let user = match Command::new("git")
         .args(&["config", "--get", "user.name"])
         .output()
@@ -65,9 +65,9 @@ fn get_user_name() -> String {
     String::from("")
 }
 
-fn get_user_email() -> String {
+pub fn get_user_email() -> String {
     let email = match Command::new("git")
-        .args(&["config", "--get", "email.name"])
+        .args(&["config", "--get", "user.email"])
         .output()
     {
         Ok(dir) => dir,

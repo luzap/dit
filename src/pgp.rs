@@ -2,9 +2,9 @@
 // 1. Create a `Writer` struct that would take care of keeping track of the current
 // writes. This should wrap a vector with some given capacity
 
+use sha1::{Digest, Sha1};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
-use sha1::{Digest, Sha1};
 
 const BIN_TO_ASCII: [u8; 64] = [
     65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
@@ -132,6 +132,34 @@ enum HashAlgo {
     SHA3_512 = 14,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum SymmetricAlgos {
+    Plaintext = 0x00,
+    IDEA = 0x01,
+    TripleDES = 0x02,
+    AES128 = 0x07,
+    AES192 = 0x08,
+    AES256 = 0x09,
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum CompressionAlgos {
+    Uncompressed = 0x00,
+    ZIP = 0x01,
+    ZLIB = 0x02,
+    BZip2 = 0x03,
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum KeyFlags {
+    CanCertifyKeys = 0x01,
+    CanSign = 0x02,
+    CanEncrypt = 0x04,
+}
+
 // Note: we can compute the issuer fingerprint by computing the hash of the
 // public key as specified in RFC 4880, Section 12.2
 enum SignatureSubpackets<'a> {
@@ -150,6 +178,31 @@ enum SignatureSubpackets<'a> {
         id: u8,
         hashable: bool,
         keyid: &'a [u8],
+    },
+    PreferredHashAlgos {
+        id: u8,
+        hashable: bool,
+        algos: Vec<HashAlgo>,
+    },
+    PreferredSymmetricAlgos {
+        id: u8,
+        hashable: bool,
+        algos: Vec<SymmetricAlgos>,
+    },
+    PreferredCompressionAlgos {
+        id: u8,
+        hashable: bool,
+        algos: Vec<CompressionAlgos>,
+    },
+    KeyServerPreference {
+        id: u8,
+        hashable: bool,
+        flags: Vec<u8>,
+    },
+    KeyFlags {
+        id: u8,
+        hashable: bool,
+        flags: KeyFlags,
     },
 }
 
@@ -177,6 +230,41 @@ impl<'a> SignatureSubpackets<'a> {
             hashable: false,
             keyid,
         }
+    }
+
+    pub fn others() -> Vec<SignatureSubpackets<'a>> {
+        vec![
+            SignatureSubpackets::KeyFlags {
+                id: 0x1b,
+                hashable: true,
+                flags: KeyFlags::CanSign,
+            },
+            SignatureSubpackets::PreferredSymmetricAlgos {
+                id: 0x0b,
+                hashable: true,
+                algos: vec![
+                    SymmetricAlgos::AES256,
+                    SymmetricAlgos::AES192,
+                    SymmetricAlgos::AES128,
+                    SymmetricAlgos::TripleDES,
+                ],
+            },
+            SignatureSubpackets::PreferredHashAlgos {
+                id: 0x15,
+                hashable: true,
+                algos: vec![HashAlgo::SHA1, HashAlgo::RIPEMD160, HashAlgo::MD5],
+            },
+            SignatureSubpackets::PreferredCompressionAlgos {
+                id: 0x16,
+                hashable: true,
+                algos: vec![CompressionAlgos::BZip2],
+            },
+            SignatureSubpackets::KeyServerPreference {
+                id: 0x17,
+                hashable: true,
+                flags: vec![0x80],
+            },
+        ]
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -216,6 +304,56 @@ impl<'a> SignatureSubpackets<'a> {
                 buffer.push(*id);
                 buffer.extend_from_slice(keyid);
             }
+            SignatureSubpackets::KeyFlags {
+                id,
+                hashable: _,
+                flags,
+            } => {
+                let mut len = (1 as usize + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(*id);
+                buffer.push(*flags as u8);
+            }
+            SignatureSubpackets::PreferredSymmetricAlgos {
+                id,
+                hashable: _,
+                algos,
+            } => {
+                let mut len = (algos.len() + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(*id);
+                buffer.extend(algos.iter().map(|item| *item as u8));
+            }
+            SignatureSubpackets::PreferredHashAlgos {
+                id,
+                hashable: _,
+                algos,
+            } => {
+                let mut len = (algos.len() + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(*id);
+                buffer.extend(algos.iter().map(|item| *item as u8));
+            }
+            SignatureSubpackets::PreferredCompressionAlgos {
+                id,
+                hashable: _,
+                algos,
+            } => {
+                let mut len = (algos.len() + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(*id);
+                buffer.extend(algos.iter().map(|item| *item as u8));
+            },
+            SignatureSubpackets::KeyServerPreference {
+                id,
+                hashable: _,
+                flags
+            } => {
+                let mut len = (flags.len() + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(*id);
+                buffer.extend(flags.iter().map(|item| *item as u8));
+            }
         }
         buffer
     }
@@ -237,6 +375,31 @@ impl<'a> SignatureSubpackets<'a> {
                 id: _,
                 hashable,
                 keyid: _,
+            } => *hashable,
+            SignatureSubpackets::PreferredHashAlgos {
+                id: _,
+                hashable,
+                algos: _,
+            } => *hashable,
+            SignatureSubpackets::PreferredSymmetricAlgos {
+                id: _,
+                hashable,
+                algos: _,
+            } => *hashable,
+            SignatureSubpackets::PreferredCompressionAlgos {
+                id: _,
+                hashable,
+                algos: _,
+            } => *hashable,
+            SignatureSubpackets::KeyServerPreference {
+                id: _,
+                hashable,
+                flags: _,
+            } => *hashable,
+            SignatureSubpackets::KeyFlags {
+                id: _,
+                hashable,
+                flags: _,
             } => *hashable,
         }
     }
@@ -276,7 +439,7 @@ impl<'a> SignaturePacket<'a> {
 }
 
 #[derive(Copy, Clone)]
-enum CurveOID {
+pub enum CurveOID {
     P256,
     P384,
     P521,
@@ -323,7 +486,7 @@ impl Index<CurveOID> for CurveRepr {
 
 pub enum PublicKey<'a> {
     ECDSA(CurveOID, &'a [u8], &'a [u8]),
-    RSA(&'a [u8], &'a [u8])
+    RSA(&'a [u8], &'a [u8]),
 }
 
 impl<'a> PublicKey<'a> {
@@ -347,7 +510,7 @@ impl<'a> PublicKey<'a> {
                 let bit_count = get_mpi_bits(&mpi);
                 buffer.extend(bit_count.to_be_bytes());
                 buffer.extend(mpi);
-            },
+            }
             PublicKey::RSA(n, e) => {
                 let n_bits = get_mpi_bits(n);
                 buffer.extend(n_bits.to_be_bytes());
@@ -438,6 +601,7 @@ fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> 
 enum PacketHeader {
     Signature = 0x02,
     PublicKey = 0x06,
+    UserID = 0x0D,
 }
 
 const PACKET_TAG_OFFSET: u8 = 2;
@@ -461,7 +625,9 @@ pub trait Packet {
         // Armor header line, with a string surrounded by five dashes on either size of
         // the text line (Section 6.2)
         // The newline has to be part of the signature
-        armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n").as_bytes());
+        // We add another newline to leave a blank space between the armor header
+        // and the armored PGP, as that line is used for additional properties
+        armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
 
         armor.extend(binary_to_radix64(&binary));
         armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
@@ -498,6 +664,21 @@ fn duration_to_bytes<'a>(duration: Duration) -> Vec<u8> {
     duration.as_secs().to_be_bytes()[4..].to_vec()
 }
 
+// TODO Remove the pub!
+pub struct UserID {
+    pub user: String,
+    pub email: String,
+}
+
+impl Packet for UserID {
+    fn as_bytes(&self) -> Vec<u8> {
+        let body = format!("{} <{}>", self.user, self.email);
+        let body_bytes = body.as_bytes();
+        let mut header = calculate_packet_header(body_bytes, PacketHeader::UserID);
+        header.extend(body_bytes);
+        header
+    }
+}
 
 pub struct PKPacket<'a> {
     version: Version,
@@ -506,28 +687,26 @@ pub struct PKPacket<'a> {
     public_key: PublicKey<'a>,
 }
 
-// TODO RFC 4880 mentions that "A primary key capable of making signatures SHOULD be 
-// accompanied by either a certification signature (on a User ID or User Attribute) or 
+// TODO RFC 4880 mentions that "A primary key capable of making signatures SHOULD be
+// accompanied by either a certification signature (on a User ID or User Attribute) or
 // a signature directly on the key.", which we are not doing for the sake of brevity
 impl<'a> PKPacket<'a> {
     pub fn new(public_key: PublicKey<'a>, time: Option<Duration>) -> PKPacket<'a> {
-
         let epoch = match time {
             Some(n) => n,
             None => match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
                 Ok(n) => n,
                 Err(e) => panic!("Error: {}", e),
-            }
+            },
         };
 
         PKPacket {
             version: Version::V4,
             creation_time: epoch,
             days_until_expiration: 0,
-            public_key
+            public_key,
         }
     }
-
 
     fn get_hashed_subsection(&self) -> Vec<u8> {
         let mut buffer = vec![
@@ -541,7 +720,7 @@ impl<'a> PKPacket<'a> {
         buffer.extend(duration_to_bytes(self.creation_time));
         buffer.push(match self.public_key {
             PublicKey::ECDSA(_, _, _) => 0x13,
-            PublicKey::RSA(_, _) => 0x01
+            PublicKey::RSA(_, _) => 0x01,
         });
         buffer.extend(self.public_key.as_bytes());
         // TODO Is there any better way of doing this?
@@ -560,7 +739,7 @@ impl<'a> PKPacket<'a> {
     pub fn keyid(&self) -> Vec<u8> {
         let hash = self.get_hashed_subsection();
         let len = hash.len();
-        hash[len-8..].to_vec()
+        hash[len - 8..].to_vec()
     }
 
     pub fn fingerprint(&self) -> Vec<u8> {
@@ -578,7 +757,7 @@ impl Packet for PKPacket<'_> {
 
                 buffer.push(match self.public_key {
                     PublicKey::ECDSA(_, _, _) => 0x13,
-                    PublicKey::RSA(_, _) => 0x01
+                    PublicKey::RSA(_, _) => 0x01,
                 });
                 assert_eq!(buffer.len(), 6);
 
@@ -597,42 +776,39 @@ impl Packet for PKPacket<'_> {
 mod test {
     use super::*;
 
-
-        const RSA_PUBLIC_KEY: PublicKey = PublicKey::RSA(
-            &[0xd9, 0x02, 0x41, 0x2a, 0xbf, 0xd6, 0x13, 0xf9, 0xed, 0x8a, 0xf0, 0xe1, 
-            0x9e, 0x02, 0x91, 0xd6, 0xee, 0x31, 0x7d, 0x82, 0xd3, 0x4f, 0x2e, 0xcd, 
-            0x63, 0xa6, 0x5f, 0xeb, 0xb3, 0x96, 0xb9, 0x45, 0x7b, 0x17, 0x01, 0x1c, 
-            0x02, 0x8a, 0x55, 0xb6, 0x6e, 0xc4, 0xac, 0x95, 0x23, 0xbe, 0xea, 0x48, 
-            0xba, 0x09, 0xb8, 0x2e, 0xcd, 0xa0, 0x79, 0x86, 0x23, 0x53, 0x63, 0x80, 
-            0xc9, 0x8c, 0x8b, 0x38, 0x4c, 0xfd, 0xef, 0x4b, 0xd9, 0x57, 0x81, 0x24, 
-            0xfb, 0x21, 0xbf, 0x97, 0xa7, 0x9c, 0x5a, 0x84, 0x85, 0x2b, 0xc5, 0x57,
-            0x40, 0x9e, 0x24, 0x57, 0x88, 0x77, 0xc6, 0xe3, 0xf9, 0xbc, 0x45, 0x6b, 
-            0x49, 0x7e, 0xa4, 0x5f, 0xa6, 0xc9, 0x9a, 0x59, 0xcb, 0xd5, 0x4f, 0x9c, 
-            0xca, 0x62, 0xe0, 0x01, 0x65, 0x77, 0x97, 0xd2, 0x74, 0x34, 0x8f, 0xb3, 
-            0x8e, 0xdb, 0x2a, 0x22, 0x9c, 0xc7, 0x4d, 0x52, 0x38, 0xb3, 0xc6, 0xb0, 
-            0x45, 0xf2, 0x9e, 0x0e, 0xa7, 0xd0, 0x9b, 0x85, 0x02, 0x74, 0x49, 0x52, 
-            0x61, 0xfa, 0x33, 0x13, 0xd9, 0xb8, 0x95, 0x9c, 0x69, 0xfc, 0x82, 0x12, 
-            0x11, 0xeb, 0x93, 0x23, 0x79, 0x6d, 0x15, 0x7a, 0x99, 0x33, 0x51, 0x7d, 
-            0x0a, 0x51, 0x76, 0x76, 0x5f, 0x7f, 0xd6, 0x57, 0xf1, 0xfc, 0xc9, 0x75, 
-            0x7c, 0x62, 0xa1, 0x14, 0xef, 0x46, 0x6f, 0x13, 0xf3, 0x78, 0x3c, 0x36, 
-            0x69, 0x69, 0x23, 0x75, 0xd0, 0x10, 0xb4, 0x89, 0x4f, 0xeb, 0xbb, 0x20, 
-            0x93, 0xf5, 0x0f, 0x3f, 0x13, 0x93, 0x8b, 0x20, 0x10, 0x8c, 0xd4, 0x96, 
-            0xe2, 0xa1, 0x9f, 0xc2, 0x8e, 0x88, 0x83, 0x18, 0x16, 0x28, 0xb5, 0x55, 
-            0x5d, 0x05, 0x99, 0x57, 0xd4, 0x55, 0x0b, 0x99, 0xf5, 0x73, 0x94, 0xe4, 
-            0xee, 0xf9, 0x12, 0x14, 0xac, 0xd3, 0xb0, 0x2b, 0x81, 0xb4, 0x3a, 0x3f, 
-            0x43, 0xb3, 0x43, 0xe8, 0x85, 0x04, 0x7e, 0x41, 0xd5, 0xc9, 0xd5, 0x83, 
-            0xe5, 0x74, 0x3d, 0x20, 0x24, 0x73, 0x5b, 0xee, 0x5e, 0xb4, 0xda, 0x0d, 
-            0xad, 0xd6, 0x33, 0x7b, 0x8f, 0x6b, 0x0d, 0xb2, 0x7d, 0x36, 0x32, 0x13, 
-            0x94, 0xda, 0x5a, 0x84, 0x8c, 0xef, 0xd8, 0x3c, 0x32, 0xa2, 0x93, 0x6c, 
-            0x56, 0x3b, 0x58, 0xc9, 0x20, 0x85, 0x25, 0xf0, 0xc5, 0x7a, 0xbe, 0xd9, 
-            0xd9, 0x0e, 0x42, 0xf2, 0xb3, 0x4c, 0xaf, 0x76, 0x70, 0x4b, 0x98, 0xb5, 
-            0xd8, 0x47, 0xdf, 0x8f, 0x5b, 0xe2, 0x1f, 0xcb, 0x3f, 0x05, 0x1e, 0x2b, 
-            0xfe, 0xd2, 0x18, 0x12, 0x71, 0x3f, 0x94, 0xef, 0x4f, 0x03, 0x3e, 0xb4, 
-            0x80, 0xb5, 0x51, 0x50, 0x74, 0xad, 0xbc, 0x4b, 0xc0, 0xa2, 0x63, 0x54, 
-            0xc3, 0x43, 0x8e, 0x76, 0x26, 0x54, 0x86, 0x7a, 0x96, 0x7b, 0x58, 0x1c, 
-            0x54, 0x12, 0xd7, 0x65, 0x95, 0x0a, 0x4a, 0xe3, 0xa3, 0xd4, 0xcc, 0x97
+    const RSA_PUBLIC_KEY: PublicKey = PublicKey::RSA(
+        &[
+            0xd9, 0x02, 0x41, 0x2a, 0xbf, 0xd6, 0x13, 0xf9, 0xed, 0x8a, 0xf0, 0xe1, 0x9e, 0x02,
+            0x91, 0xd6, 0xee, 0x31, 0x7d, 0x82, 0xd3, 0x4f, 0x2e, 0xcd, 0x63, 0xa6, 0x5f, 0xeb,
+            0xb3, 0x96, 0xb9, 0x45, 0x7b, 0x17, 0x01, 0x1c, 0x02, 0x8a, 0x55, 0xb6, 0x6e, 0xc4,
+            0xac, 0x95, 0x23, 0xbe, 0xea, 0x48, 0xba, 0x09, 0xb8, 0x2e, 0xcd, 0xa0, 0x79, 0x86,
+            0x23, 0x53, 0x63, 0x80, 0xc9, 0x8c, 0x8b, 0x38, 0x4c, 0xfd, 0xef, 0x4b, 0xd9, 0x57,
+            0x81, 0x24, 0xfb, 0x21, 0xbf, 0x97, 0xa7, 0x9c, 0x5a, 0x84, 0x85, 0x2b, 0xc5, 0x57,
+            0x40, 0x9e, 0x24, 0x57, 0x88, 0x77, 0xc6, 0xe3, 0xf9, 0xbc, 0x45, 0x6b, 0x49, 0x7e,
+            0xa4, 0x5f, 0xa6, 0xc9, 0x9a, 0x59, 0xcb, 0xd5, 0x4f, 0x9c, 0xca, 0x62, 0xe0, 0x01,
+            0x65, 0x77, 0x97, 0xd2, 0x74, 0x34, 0x8f, 0xb3, 0x8e, 0xdb, 0x2a, 0x22, 0x9c, 0xc7,
+            0x4d, 0x52, 0x38, 0xb3, 0xc6, 0xb0, 0x45, 0xf2, 0x9e, 0x0e, 0xa7, 0xd0, 0x9b, 0x85,
+            0x02, 0x74, 0x49, 0x52, 0x61, 0xfa, 0x33, 0x13, 0xd9, 0xb8, 0x95, 0x9c, 0x69, 0xfc,
+            0x82, 0x12, 0x11, 0xeb, 0x93, 0x23, 0x79, 0x6d, 0x15, 0x7a, 0x99, 0x33, 0x51, 0x7d,
+            0x0a, 0x51, 0x76, 0x76, 0x5f, 0x7f, 0xd6, 0x57, 0xf1, 0xfc, 0xc9, 0x75, 0x7c, 0x62,
+            0xa1, 0x14, 0xef, 0x46, 0x6f, 0x13, 0xf3, 0x78, 0x3c, 0x36, 0x69, 0x69, 0x23, 0x75,
+            0xd0, 0x10, 0xb4, 0x89, 0x4f, 0xeb, 0xbb, 0x20, 0x93, 0xf5, 0x0f, 0x3f, 0x13, 0x93,
+            0x8b, 0x20, 0x10, 0x8c, 0xd4, 0x96, 0xe2, 0xa1, 0x9f, 0xc2, 0x8e, 0x88, 0x83, 0x18,
+            0x16, 0x28, 0xb5, 0x55, 0x5d, 0x05, 0x99, 0x57, 0xd4, 0x55, 0x0b, 0x99, 0xf5, 0x73,
+            0x94, 0xe4, 0xee, 0xf9, 0x12, 0x14, 0xac, 0xd3, 0xb0, 0x2b, 0x81, 0xb4, 0x3a, 0x3f,
+            0x43, 0xb3, 0x43, 0xe8, 0x85, 0x04, 0x7e, 0x41, 0xd5, 0xc9, 0xd5, 0x83, 0xe5, 0x74,
+            0x3d, 0x20, 0x24, 0x73, 0x5b, 0xee, 0x5e, 0xb4, 0xda, 0x0d, 0xad, 0xd6, 0x33, 0x7b,
+            0x8f, 0x6b, 0x0d, 0xb2, 0x7d, 0x36, 0x32, 0x13, 0x94, 0xda, 0x5a, 0x84, 0x8c, 0xef,
+            0xd8, 0x3c, 0x32, 0xa2, 0x93, 0x6c, 0x56, 0x3b, 0x58, 0xc9, 0x20, 0x85, 0x25, 0xf0,
+            0xc5, 0x7a, 0xbe, 0xd9, 0xd9, 0x0e, 0x42, 0xf2, 0xb3, 0x4c, 0xaf, 0x76, 0x70, 0x4b,
+            0x98, 0xb5, 0xd8, 0x47, 0xdf, 0x8f, 0x5b, 0xe2, 0x1f, 0xcb, 0x3f, 0x05, 0x1e, 0x2b,
+            0xfe, 0xd2, 0x18, 0x12, 0x71, 0x3f, 0x94, 0xef, 0x4f, 0x03, 0x3e, 0xb4, 0x80, 0xb5,
+            0x51, 0x50, 0x74, 0xad, 0xbc, 0x4b, 0xc0, 0xa2, 0x63, 0x54, 0xc3, 0x43, 0x8e, 0x76,
+            0x26, 0x54, 0x86, 0x7a, 0x96, 0x7b, 0x58, 0x1c, 0x54, 0x12, 0xd7, 0x65, 0x95, 0x0a,
+            0x4a, 0xe3, 0xa3, 0xd4, 0xcc, 0x97,
         ],
-        &[0x01, 0x00, 0x01]);
+        &[0x01, 0x00, 0x01],
+    );
 
     #[test]
     fn mpi_standard_bitlength() {
@@ -658,33 +834,32 @@ mod test {
 
     #[test]
     fn public_key_serialization() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, 
-            Some(Duration::from_secs(0x60fc16a7)));
+        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
 
-            println!("{:X?}", public_key.as_bytes());
+        println!("{:X?}", public_key.as_bytes());
     }
-
-
 
     #[test]
     fn public_key_keyid() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, 
-            Some(Duration::from_secs(0x60fc16a7)));
+        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
 
-        assert_eq!(public_key.keyid(), &[
-            0xD3, 0x8B, 0x2A, 0xC8, 0x1B, 0xA3, 0x6F, 0xA3
-        ]);
+        assert_eq!(
+            public_key.keyid(),
+            &[0xD3, 0x8B, 0x2A, 0xC8, 0x1B, 0xA3, 0x6F, 0xA3]
+        );
     }
 
     #[test]
     fn public_key_fingerprint() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, 
-            Some(Duration::from_secs(0x60fc16a7)));
+        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
 
-        assert_eq!(public_key.fingerprint(), &[
-            0xb6, 0x57, 0x58, 0x37, 0x9a, 0x42, 0x62, 0x5f, 0xc8, 0x44, 
-            0xc4, 0x1a, 0xd3, 0x8b, 0x2a, 0xc8, 0x1b, 0xa3, 0x6f, 0xa3
-        ]);
+        assert_eq!(
+            public_key.fingerprint(),
+            &[
+                0xb6, 0x57, 0x58, 0x37, 0x9a, 0x42, 0x62, 0x5f, 0xc8, 0x44, 0xc4, 0x1a, 0xd3, 0x8b,
+                0x2a, 0xc8, 0x1b, 0xa3, 0x6f, 0xa3
+            ]
+        );
     }
 
     #[test]

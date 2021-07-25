@@ -33,7 +33,6 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         Err(_) => return Err(Errors::Response),
     };
 
-    let delay = time::Duration::from_millis(25);
     let input_stage1 = KeyGenStage1Input {
         index: (party_num_int - 1) as usize,
     };
@@ -50,7 +49,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
     };
 
     let round1_ans_vec =
-        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round1");
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "round1");
     let mut bc1_vec = round1_ans_vec
         .iter()
         .map(|m| serde_json::from_str::<KeyGenBroadcastMessage1>(m).unwrap())
@@ -68,7 +67,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
     };
 
     let round2_ans_vec =
-        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round2");
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "round2");
 
     let mut decom1_vec = round2_ans_vec
         .iter()
@@ -109,7 +108,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         }
     }
     // get shares from other parties.
-    let round3_ans_vec = channel.poll_for_p2p(party_num_int, params.share_count, delay, "round3");
+    let round3_ans_vec = channel.poll_for_p2p(party_num_int, params.share_count, "round3");
 
     // decrypt shares from other parties.
     let mut j = 0;
@@ -133,7 +132,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
 
     //get vss_scheme for others.
     let round4_ans_vec =
-        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round4");
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "round4");
 
     let mut j = 0;
     let mut vss_scheme_vec: Vec<VerifiableSS<GE>> = Vec::new();
@@ -164,7 +163,7 @@ pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
         )
         .is_ok());
     let round5_ans_vec =
-        channel.poll_for_broadcasts(party_num_int, params.share_count, delay, "round5");
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "round5");
 
     let mut j = 0;
     let mut dlog_proof_vec: Vec<DLogProof<GE>> = Vec::new();
