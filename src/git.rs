@@ -1,5 +1,8 @@
 use std::process::Command;
 use std::time::Duration;
+use std::path::PathBuf;
+use std::fs::{File};
+use std::io::Write;
 
 // TODO This does not take into account windows \r
 // (though to be fair, not sure if this compiles on windows in the first place)
@@ -95,7 +98,7 @@ fn get_current_timezone() -> String {
 pub fn get_help_string() -> String {
     let help = match Command::new("git").arg("--help").output() {
         Ok(h) => h,
-        Err(e) => panic!("Git error: {}", e)
+        Err(e) => panic!("Git error: {}", e),
     };
     if !help.stdout.is_empty() {
         return parse_cmd_output(&help.stdout);
@@ -122,6 +125,35 @@ pub fn create_tag_string(
     )
 }
 
-pub fn create_git_tag(tag_body: &str) {
-    Command::new("git").args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body]).output();
+/// Creates a tag in the local Git repository
+///
+/// `git hash-object -w -t tag --stdin` hashes the file and adds it to the Git 
+/// repository but it does not actually create a reference to it as though it were
+/// a tag, which can be accomplished by writing the tag hash to `$REPO/.git/refs/tags/[TAGNAME]`.
+/// 
+/// When testing, the following command produces a functional tag:
+/// ```bash
+/// echo -e "object $(git rev-parse HEAD~1)\ntype commit\ntag 0.1\ntagger Lukas Zapolskas <lukas.zapolskas@gmail.com> $(date +%s) +0100\n\nDoing a test tag" > temp.txt && gpg -bsa -o- temp.txt >> temp.txt && git hash-object -w -t tag temp.txt > .git/refs/tags/0.1
+/// ```
+pub fn create_git_tag(tag_name: &str, tag_body: &str) {
+    let hash = match Command::new("git")
+        .args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body])
+        .output() {
+            Ok(hash) => hash,
+            Err(e) => println!("Error hashing object: {}", e)
+        };
+
+    if !hash.stdout.is_empty() {
+        let hash_string = parse_cmd_output(hash);
+        let mut tag_path = PathBuf::new();
+        // TODO Since part of the path should be identical regardless of
+        // repo, is there a better way to build the PathBuf?
+        tag_path.push(get_repo_root());
+        tag_path.push(".git");
+        tag_path.push("refs");
+        tag_path.push("tags");
+        tag_path.push(tag_name);
+        let tag_file = File::create(tag_path).unwrap();
+        tag_file.write_all(hash);
+    }
 }
