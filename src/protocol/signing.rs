@@ -20,7 +20,7 @@ use crate::channel::Errors;
 use super::utils::Config;
 
 pub fn distributed_sign(
-    hash: String,
+    hash: &[u8],
     config: Config,
     keypair: PartyKeyPair,
 ) -> Result<SignatureRecid, Errors> {
@@ -36,11 +36,7 @@ pub fn distributed_sign(
 
     let THRESHOLD = params.threshold;
 
-    let message = match hex::decode(hash.clone()) {
-        Ok(x) => x,
-        Err(_e) => hash.as_bytes().to_vec(),
-    };
-    let message = &message[..];
+    let message = hash;
 
     let party_num_int = match channel.signup_sign() {
         Ok(i) => i,

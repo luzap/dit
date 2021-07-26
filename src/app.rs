@@ -1,16 +1,15 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::process::{Command, Stdio};
 use std::fs;
+use std::process::{Command, Stdio};
 
 use crate::channel;
+use crate::git;
+use crate::pgp::*;
 use crate::protocol;
 use crate::utils::Config;
-use crate::git;
-use crate::pgp;
-use crate::pgp::Packet;
 
-use curv::elliptic::curves::traits::*;
 use curv::arithmetic::Converter;
+use curv::elliptic::curves::traits::*;
 
 // TODO Make this part of the config
 // TODO How do we output the correct help messages? Need to have the output
@@ -27,12 +26,13 @@ pub fn build_app() -> App<'static, 'static> {
             App::new("keygen")
                 .help("Signal the start of the key generation protocol")
                 .arg(Arg::with_name("server").short("s"))
-                .arg(Arg::with_name("keyfile").short("k").number_of_values(1))
+                .arg(Arg::with_name("keyfile").short("k").number_of_values(1)),
         )
         .subcommand(
-            App::new("start-tag").help("Start distributed tagging")
-            .arg(Arg::with_name("message").short("m").number_of_values(1))
-            .arg(Arg::with_name("tag name").required(true))
+            App::new("start-tag")
+                .help("Start distributed tagging")
+                .arg(Arg::with_name("message").short("m").number_of_values(1))
+                .arg(Arg::with_name("tag name").required(true)),
         );
     app
 }
@@ -47,21 +47,28 @@ pub fn keygen_subcommand(
     let keys = protocol::dkg::distributed_keygen(config);
     let public_key = match keys {
         Ok(k) => k,
-        Err(_) => unreachable!()
+        Err(_) => unreachable!(),
     };
-    
     let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
     let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
 
     let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
-    let pub_key = pgp::PKPacket::new(pgp::PublicKey::ECDSA(pgp::CurveOID::Secp256k1, &x, &y), None);
-    let user_packet = pgp::UserID {
+    let pub_key = PKPacket::new(PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y), None);
+    let user_packet = UserID {
         user: git::get_user_name(),
-        email: git::get_user_email()
+        email: git::get_user_email(),
     };
-    let mut message = pub_key.as_bytes();
-    message.extend(user_packet.as_bytes());
-        
+
+    let user_id = pub_key.keyid();
+    let signature =
+        SignaturePacket::new(SigType::UserIDPKCert, &user_id, Some(pub_key.creation_time));
+    
+    let message = PublicKeyMessage::new(pub_key, user_packet, signature);
+    let msg = message.get_signing_portion() 
+    
+    // protocol::signing::distributed_sign()
+
+
     fs::write(key_file, message).expect("File already exists");
 
     Ok(())
@@ -74,21 +81,17 @@ pub fn tag_subcommand(config: Config, args: Option<ArgMatches>) -> Result<(), ch
             println!("Signing the following commit: {}", hash);
             // TODO Get key pair
 
-            // protocol::signing::distributed_sign(hash, 
-
+            // protocol::signing::distributed_sign(hash,
         }
-    } 
+    }
 
     Ok(())
 }
 
-
 // TODO Move out of here
 pub fn git_subcommand(subcommand: &str, args: Option<&ArgMatches>) {
     let mut git_child = Command::new(GIT);
-    let mut git_owning = git_child
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit());
+    let mut git_owning = git_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());
 
     if subcommand.is_empty() {
         git_owning = git_owning.arg("--help");

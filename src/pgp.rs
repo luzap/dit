@@ -2,6 +2,7 @@
 // 1. Create a `Writer` struct that would take care of keeping track of the current
 // writes. This should wrap a vector with some given capacity
 
+use hex;
 use sha1::{Digest, Sha1};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
@@ -71,6 +72,40 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
+pub struct PublicKeyMessage<'a> {
+    public_key: PKPacket<'a>,
+    user_id: UserID,
+    signature: SignaturePacket<'a>,
+}
+
+impl<'a> PublicKeyMessage<'a> {
+    pub fn new(
+        public_key: PKPacket<'a>,
+        user_id: UserID,
+        signature: SignaturePacket<'a>,
+    ) -> PublicKeyMessage<'a> {
+        PublicKeyMessage {
+            public_key,
+            user_id,
+            signature,
+        }
+    }
+
+    pub fn get_signing_portion(&mut self) -> Vec<u8> {
+        let mut buffer = vec![0x99];
+        buffer.extend(self.public_key.as_bytes());
+        buffer.extend(self.user_id.as_bytes());
+        buffer.extend(self.signature.get_trailer());
+
+        buffer
+    }
+
+    fn finalize_signature(&mut self, sig: PKAlgo<'a>, hash: u16) {
+        self.signature.hash = hash;
+        self.signature.pubkey_algo = sig;
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum Version {
@@ -79,13 +114,15 @@ enum Version {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum SigType {
+pub enum SigType {
     Binary = 0x00,
     CanonicalText = 0x01,
     Standalone = 0x02,
+    UserIDPKCert = 0x10,
 }
 
-enum PKAlgo<'a> {
+pub enum PKAlgo<'a> {
+    None,
     DSA(&'a [u8], &'a [u8]),
     ECDSA(&'a [u8], &'a [u8]),
 }
@@ -94,6 +131,7 @@ impl<'a> PKAlgo<'a> {
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self {
+            PKAlgo::None => unreachable!(),
             PKAlgo::ECDSA(r, s) => {
                 let r_len = get_mpi_bits(r);
                 buffer.extend_from_slice(&r_len.to_be_bytes());
@@ -343,11 +381,11 @@ impl<'a> SignatureSubpackets<'a> {
                 buffer.extend(format_subpacket_length(&mut len));
                 buffer.push(*id);
                 buffer.extend(algos.iter().map(|item| *item as u8));
-            },
+            }
             SignatureSubpackets::KeyServerPreference {
                 id,
                 hashable: _,
-                flags
+                flags,
             } => {
                 let mut len = (flags.len() + 1).to_be_bytes();
                 buffer.extend(format_subpacket_length(&mut len));
@@ -405,7 +443,7 @@ impl<'a> SignatureSubpackets<'a> {
     }
 }
 
-struct SignaturePacket<'a> {
+pub struct SignaturePacket<'a> {
     version: Version,
     sigtype: SigType,
     pubkey_algo: PKAlgo<'a>,
@@ -415,17 +453,20 @@ struct SignaturePacket<'a> {
 }
 
 impl<'a> SignaturePacket<'a> {
-    fn new(r: &'a [u8], s: &'a [u8]) -> SignaturePacket<'a> {
+    pub fn new(sigtype: SigType, keyid: &'a str, time: Option<Duration>) -> SignaturePacket<'a> {
         // TODO Under what conditions does this fail
-        let epoch = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(n) => n,
-            Err(e) => panic!("Error: {}", e),
+        let epoch = match time {
+            Some(n) => n,
+            None => match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(n) => n,
+                Err(e) => panic!("Error: {}", e),
+            },
         };
 
         let mut signature = SignaturePacket {
             version: Version::V4,
-            sigtype: SigType::Binary,
-            pubkey_algo: PKAlgo::ECDSA(r, s),
+            sigtype,
+            pubkey_algo: PKAlgo::None,
             hash_algo: HashAlgo::SHA2_256,
             subpackets: Vec::new(),
             hash: 0,
@@ -433,6 +474,9 @@ impl<'a> SignaturePacket<'a> {
         signature
             .subpackets
             .push(SignatureSubpackets::creation_time(epoch));
+        signature
+            .subpackets
+            .push(SignatureSubpackets::issuer_keyid(keyid.as_bytes()));
 
         signature
     }
@@ -553,6 +597,7 @@ impl<'a> SignaturePacket<'a> {
             self.version as u8,
             self.sigtype as u8,
             match self.pubkey_algo {
+                PKAlgo::None => unreachable!(),
                 PKAlgo::DSA(_, _) => 0x11,
                 PKAlgo::ECDSA(_, _) => 0x13,
             },
@@ -682,7 +727,7 @@ impl Packet for UserID {
 
 pub struct PKPacket<'a> {
     version: Version,
-    creation_time: Duration,
+    pub creation_time: Duration,
     days_until_expiration: u16,
     public_key: PublicKey<'a>,
 }
@@ -736,10 +781,10 @@ impl<'a> PKPacket<'a> {
     }
 
     // The Key ID is unambiguously the lowest 64 bits of the key hash
-    pub fn keyid(&self) -> Vec<u8> {
+    pub fn keyid(&self) -> String {
         let hash = self.get_hashed_subsection();
         let len = hash.len();
-        hash[len - 8..].to_vec()
+        hex::encode_upper(&hash[len - 8..])
     }
 
     pub fn fingerprint(&self) -> Vec<u8> {
@@ -845,7 +890,7 @@ mod test {
 
         assert_eq!(
             public_key.keyid(),
-            &[0xD3, 0x8B, 0x2A, 0xC8, 0x1B, 0xA3, 0x6F, 0xA3]
+            String::from("D38B2AC81BA36FA3") // &[0xD3, 0x8B, 0x2A, 0xC8, 0x1B, 0xA3, 0x6F, 0xA3]
         );
     }
 
