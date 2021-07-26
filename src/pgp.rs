@@ -51,6 +51,76 @@ pub fn binary_to_radix64(buffer: &[u8]) -> Vec<u8> {
     encoded
 }
 
+/// Format an OpenPGP message into an ASCII-armored format.
+///
+/// Armor header line, with a string surrounded by five dashes on either size of
+/// the text line (Section 6.2)
+/// The newline has to be part of the signature
+/// We add another newline to leave a blank space between the armor header
+/// and the armored PGP, as that line is used for additional properties
+fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
+    let mut armor = Vec::new();
+
+    armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
+
+    armor.extend(binary_to_radix64(&buffer));
+    armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
+
+    armor
+}
+
+#[repr(u8)]
+enum PacketHeader {
+    Signature = 0x02,
+    PublicKey = 0x06,
+    UserID = 0x0D,
+}
+
+const PACKET_TAG_OFFSET: u8 = 2;
+
+/// Calculate the old style header for a packet.
+///
+/// The old-style header for a packet is a single "control" byte followed by
+/// 1-4 (?) bytes denoting the size of the following packet. The control byte
+/// always has the MSB set to 1. Bit 6 denotes the version of the header (
+/// we will be ignoring this to avoid additional complexity). Bits 5-2 contain
+/// the packet type, and the lower two bits contain the number of subsequent
+/// bytes holding the size of the packet.
+fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> {
+    let mut hdr = Vec::new();
+
+    let mut header: u8 = 0b1000_0000;
+    header |= (packet_type as u8) << PACKET_TAG_OFFSET;
+
+    // TODO Move this to a separate function
+    let leading_zeroes = buffer.len().to_be_bytes().partition_point(|&x| x == 0);
+    let size_bytes = &buffer.len().to_be_bytes()[leading_zeroes..];
+
+    header |= match size_bytes.len() as u8 {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        _ => unreachable!(),
+    };
+    hdr.push(header);
+    hdr.extend_from_slice(size_bytes);
+
+    hdr
+}
+
+#[repr(u8)]
+enum ECPointCompression {
+    Uncompressed = 0x04,
+    NativePointFormat = 0x40,
+    OnlyXCoord = 0x41,
+    OnlyYCoord = 0x42,
+}
+
+/// Get the number of bits contained in a multi-precision integer (MPIs) contained in
+/// a slice.
+///
+/// OpenPGP represents MPIs as [size MPI], where the size consists of two bytes,
+/// and holds the count of _bits_ of the MPI (as opposed to the standard byte count).
 fn get_mpi_bits(mpi: &[u8]) -> u16 {
     let mut count: u16 = 8u16 - mpi[0].leading_zeros() as u16;
     count += (mpi[1..].len() as u16) * 8;
@@ -72,6 +142,13 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
+pub enum Packet {
+    PublicKey(PKPacket),
+    Signature(SignaturePacket),
+    UserID(UserID),
+}
+
+// TODO Remove this
 pub struct PublicKeyMessage<'a> {
     public_key: PKPacket<'a>,
     user_id: UserID,
@@ -92,7 +169,17 @@ impl<'a> PublicKeyMessage<'a> {
     }
 
     pub fn get_signing_portion(&mut self) -> Vec<u8> {
+        // TODO What does 'once the data body is hashed, then a trailer is hashed' mean in the
+        // standard? Does it mean that the two are concatenated and then hashed, or do
+
         let mut buffer = vec![0x99];
+        let pk = self.public_key.as_bytes();
+        // TODO Strip header
+
+        let len = self.user_id.user.len() + self.user_id.email.len() + 2;
+        buffer.extend(&len.to_be_bytes()[4..]);
+        buffer.extend(self.signature.get_trailer());
+
         buffer.extend(self.public_key.as_bytes());
         buffer.extend(self.user_id.as_bytes());
         buffer.extend(self.signature.get_trailer());
@@ -155,6 +242,32 @@ impl<'a> PKAlgo<'a> {
     }
 }
 
+/// A trait for contextualizing OpenPGP object interpretation.
+///
+/// OpenPGP objects are serialized differently based on where they are used. For
+/// instance, a Public Key packet can be interpreted differently when being written
+/// to file versus when it needs to be signed. This is not only true for packets,
+/// but for some subpackets as well.
+pub trait ToPGPBytes {
+    /// Get OpenPGP-formatted content without packet headers
+    fn to_raw_bytes(&self) -> Vec<u8>;
+    /// Get OpenPGP-formatted content with fully-formed packet headers
+    fn to_formatted_bytes(&self) -> Vec<u8>;
+
+    /// Get a buffer to be used in subsequent hashing operations.
+    ///
+    /// The output is not equivalent to that of `to_raw_bytes()`, as OpenPGP
+    /// specifies that, depending on the version number, a lot of packets
+    /// need to be outputted in a special way before hashing them.
+    ///
+    /// # Examples
+    /// When signing a public key, the message has to contain a User ID packet and
+    /// a Signature linking the public key with a User ID, but rather than having the
+    /// UserID header, this signing procedure expects the UserID to be preceded with a
+    /// 4 byte size header and nothing else.
+    fn to_hashable_bytes(&self) -> Vec<u8>;
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum HashAlgo {
@@ -196,6 +309,57 @@ enum KeyFlags {
     CanCertifyKeys = 0x01,
     CanSign = 0x02,
     CanEncrypt = 0x04,
+}
+
+#[derive(Copy, Clone)]
+pub enum CurveOID {
+    P256,
+    P384,
+    P521,
+    BrainpoolP256r1,
+    BrainpoolP512r1,
+    Ed25519,
+    Curve25519,
+    Secp256k1,
+}
+
+struct CurveRepr([&'static [u8]; 8]);
+
+// These technically are encoded as string values that
+// then have to go through some transformations that truncates
+// the beginning, but it does not feel worth it to keep them,
+// as the values feel arbitrary anyways
+const CURVE_REPR: CurveRepr = CurveRepr([
+    &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07],
+    &[0x2B, 0x81, 0x04, 0x00, 0x22],
+    &[0x2B, 0x81, 0x04, 0x00, 0x23],
+    &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07],
+    &[0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0D],
+    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01],
+    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01],
+    &[0x2B, 0x81, 0x04, 0x00, 0x0A],
+]);
+
+impl Index<CurveOID> for CurveRepr {
+    type Output = &'static [u8];
+
+    fn index(&self, index: CurveOID) -> &Self::Output {
+        match index {
+            CurveOID::P256 => &self.0[0],
+            CurveOID::P384 => &self.0[1],
+            CurveOID::P521 => &self.0[2],
+            CurveOID::BrainpoolP256r1 => &self.0[3],
+            CurveOID::BrainpoolP512r1 => &self.0[4],
+            CurveOID::Ed25519 => &self.0[5],
+            CurveOID::Curve25519 => &self.0[6],
+            CurveOID::Secp256k1 => &self.0[7],
+        }
+    }
+}
+
+pub enum PublicKey<'a> {
+    ECDSA(CurveOID, &'a [u8], &'a [u8]),
+    RSA(&'a [u8], &'a [u8]),
 }
 
 // Note: we can compute the issuer fingerprint by computing the hash of the
@@ -253,6 +417,9 @@ impl<'a> SignatureSubpackets<'a> {
         }
     }
 
+    /// Create a fingerprint subpacket attached to a Signature packet.
+    ///
+    /// The fingerprint of a signature is the SHA1 hash of its hashed section.
     pub fn fingerprint(fingerprint: &'a [u8]) -> SignatureSubpackets<'a> {
         SignatureSubpackets::IssuerFingerprint {
             id: 0x21,
@@ -262,6 +429,9 @@ impl<'a> SignatureSubpackets<'a> {
         }
     }
 
+    /// Create a keyid subpacket attached to a Signature packet.
+    ///
+    /// The key ID of a signature is the lowest 64 bits of its SHA1 hash.
     pub fn issuer_keyid(keyid: &'a [u8]) -> SignatureSubpackets<'a> {
         SignatureSubpackets::IssuerKeyID {
             id: 0x10,
@@ -443,6 +613,42 @@ impl<'a> SignatureSubpackets<'a> {
     }
 }
 
+impl<'a> PublicKey<'a> {
+    fn as_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        match self {
+            PublicKey::ECDSA(oid, key_x, key_y) => {
+                buffer.push(CURVE_REPR[*oid].len() as u8);
+                buffer.extend(CURVE_REPR[*oid]);
+
+                // The MPI encoding of EC points is a little different. The point
+                // contains metadata on its own compression level by way of its
+                // first byte. This byte is concatenated with the x and y values
+                // of the EC point. This whole bitstring is then treated as the
+                // MPI and serialized into the key
+                let mut mpi = Vec::new();
+                mpi.push(0x04);
+                mpi.extend_from_slice(key_x);
+                mpi.extend_from_slice(key_y);
+
+                let bit_count = get_mpi_bits(&mpi);
+                buffer.extend(bit_count.to_be_bytes());
+                buffer.extend(mpi);
+            }
+            PublicKey::RSA(n, e) => {
+                let n_bits = get_mpi_bits(n);
+                buffer.extend(n_bits.to_be_bytes());
+                buffer.extend(*n);
+
+                let e_bits = get_mpi_bits(e);
+                buffer.extend(e_bits.to_be_bytes());
+                buffer.extend(*e);
+            }
+        }
+        buffer
+    }
+}
+
 pub struct SignaturePacket<'a> {
     version: Version,
     sigtype: SigType,
@@ -480,109 +686,20 @@ impl<'a> SignaturePacket<'a> {
 
         signature
     }
-}
 
-#[derive(Copy, Clone)]
-pub enum CurveOID {
-    P256,
-    P384,
-    P521,
-    BrainpoolP256r1,
-    BrainpoolP512r1,
-    Ed25519,
-    Curve25519,
-    Secp256k1,
-}
-
-struct CurveRepr([&'static [u8]; 8]);
-
-// These technically are encoded as string values that
-// then have to go through some transformations that truncates
-// the beginning, but it does not feel worth it to keep them,
-// as the values feel arbitrary anyways
-const CURVE_REPR: CurveRepr = CurveRepr([
-    &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07],
-    &[0x2B, 0x81, 0x04, 0x00, 0x22],
-    &[0x2B, 0x81, 0x04, 0x00, 0x23],
-    &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07],
-    &[0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0D],
-    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01],
-    &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01],
-    &[0x2B, 0x81, 0x04, 0x00, 0x0A],
-]);
-
-impl Index<CurveOID> for CurveRepr {
-    type Output = &'static [u8];
-
-    fn index(&self, index: CurveOID) -> &Self::Output {
-        match index {
-            CurveOID::P256 => &self.0[0],
-            CurveOID::P384 => &self.0[1],
-            CurveOID::P521 => &self.0[2],
-            CurveOID::BrainpoolP256r1 => &self.0[3],
-            CurveOID::BrainpoolP512r1 => &self.0[4],
-            CurveOID::Ed25519 => &self.0[5],
-            CurveOID::Curve25519 => &self.0[6],
-            CurveOID::Secp256k1 => &self.0[7],
-        }
-    }
-}
-
-pub enum PublicKey<'a> {
-    ECDSA(CurveOID, &'a [u8], &'a [u8]),
-    RSA(&'a [u8], &'a [u8]),
-}
-
-impl<'a> PublicKey<'a> {
-    fn as_bytes(&self) -> Vec<u8> {
-        let mut buffer = Vec::new();
-        match self {
-            PublicKey::ECDSA(oid, key_x, key_y) => {
-                buffer.push(CURVE_REPR[*oid].len() as u8);
-                buffer.extend(CURVE_REPR[*oid]);
-
-                // The MPI encoding of EC points is a little different. The point
-                // contains metadata on its own compression level by way of its
-                // first byte. This byte is concatenated with the x and y values
-                // of the EC point. This whole bitstring is then treated as the
-                // MPI and serialized into the key
-                let mut mpi = Vec::new();
-                mpi.push(0x04);
-                mpi.extend_from_slice(key_x);
-                mpi.extend_from_slice(key_y);
-
-                let bit_count = get_mpi_bits(&mpi);
-                buffer.extend(bit_count.to_be_bytes());
-                buffer.extend(mpi);
-            }
-            PublicKey::RSA(n, e) => {
-                let n_bits = get_mpi_bits(n);
-                buffer.extend(n_bits.to_be_bytes());
-                buffer.extend(*n);
-
-                let e_bits = get_mpi_bits(e);
-                buffer.extend(e_bits.to_be_bytes());
-                buffer.extend(*e);
-            }
-        }
-        buffer
-    }
-}
-
-impl<'a> SignaturePacket<'a> {
-    /* A V4 signature hashes the packet body starting from its first field, the
-     version number, through the end of the hashed subpacket data and a final
-     extra trailer. Thus, the hashed fields are:
-      - the signature version (0x04),
-      - the signature type,
-      - the public-key algorithm,
-      - the hash algorithm,
-      - the hashed subpacket length,
-      - the hashed subpacket body,
-      - the two octets 0x04 and 0xFF,
-      - a four-octet big-endian number that is the length of the hashed data from the
-    Signature packet stopping right before the 0x04, 0xff octets. */
-
+    ///  
+    /// A V4 signature hashes the packet body starting from its first field, the
+    /// version number, through the end of the hashed subpacket data and a final
+    /// extra trailer. Thus, the hashed fields are:
+    ///  - the signature version (0x04),
+    ///  - the signature type,
+    ///  - the public-key algorithm,
+    ///  - the hash algorithm,
+    ///  - the hashed subpacket length,
+    ///  - the hashed subpacket body,
+    ///  - the two octets 0x04 and 0xFF,
+    ///  - a four-octet big-endian number that is the length of the hashed data from the
+    /// Signature packet stopping right before the 0x04, 0xff octets. */
     fn get_trailer(&self) -> Vec<u8> {
         let mut hashable = self.get_hashable();
         let len = hashable.len() as u64;
@@ -620,69 +737,18 @@ impl<'a> SignaturePacket<'a> {
     }
 }
 
-fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> {
-    let mut hdr = Vec::new();
+// TODO Add context
+impl<'a> ToPGPBytes for SignaturePacket<'a> {
+    fn to_hashable_bytes(&self) {
+        let mut hashable = self.get_hashable();
+        let len = hashable.len() as u64;
 
-    let mut header: u8 = 0b1000_0000;
-    header |= (packet_type as u8) << PACKET_TAG_OFFSET;
-
-    // TODO Move this to a separate function
-    let leading_zeroes = buffer.len().to_be_bytes().partition_point(|&x| x == 0);
-    let size_bytes = &buffer.len().to_be_bytes()[leading_zeroes..];
-
-    header |= match size_bytes.len() as u8 {
-        1 => 0,
-        2 => 1,
-        4 => 2,
-        _ => unreachable!(),
-    };
-    hdr.push(header);
-    hdr.extend_from_slice(size_bytes);
-
-    hdr
-}
-
-#[repr(u8)]
-enum PacketHeader {
-    Signature = 0x02,
-    PublicKey = 0x06,
-    UserID = 0x0D,
-}
-
-const PACKET_TAG_OFFSET: u8 = 2;
-
-#[repr(u8)]
-enum ECPointCompression {
-    Uncompressed = 0x04,
-    NativePointFormat = 0x40,
-    OnlyXCoord = 0x41,
-    OnlyYCoord = 0x42,
-}
-
-pub trait Packet {
-    fn as_bytes(&self) -> Vec<u8>;
-
-    // All of the implementations for this will be identical, so this should be perfectly fine
-    fn as_radix64(&self) -> Vec<u8> {
-        let binary = self.as_bytes();
-        let mut armor = Vec::new();
-
-        // Armor header line, with a string surrounded by five dashes on either size of
-        // the text line (Section 6.2)
-        // The newline has to be part of the signature
-        // We add another newline to leave a blank space between the armor header
-        // and the armored PGP, as that line is used for additional properties
-        armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
-
-        armor.extend(binary_to_radix64(&binary));
-        armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
-
-        armor
+        hashable.extend(&[0x04, 0xFF]);
+        hashable.extend(&len.to_be_bytes());
+        hashable
     }
-}
 
-impl<'a> Packet for SignaturePacket<'a> {
-    fn as_bytes(&self) -> Vec<u8> {
+    fn to_formatted_bytes(&self) -> Vec<u8> {
         let mut contents = self.get_hashable();
         let mut unhashed: Vec<u8> = Vec::new();
         for subpacket in self.subpackets.iter() {
@@ -715,8 +781,8 @@ pub struct UserID {
     pub email: String,
 }
 
-impl Packet for UserID {
-    fn as_bytes(&self) -> Vec<u8> {
+impl ToPGPBytes for UserID {
+    fn to_formatted_bytes(&self) -> Vec<u8> {
         let body = format!("{} <{}>", self.user, self.email);
         let body_bytes = body.as_bytes();
         let mut header = calculate_packet_header(body_bytes, PacketHeader::UserID);
@@ -792,8 +858,8 @@ impl<'a> PKPacket<'a> {
     }
 }
 
-impl Packet for PKPacket<'_> {
-    fn as_bytes(&self) -> Vec<u8> {
+impl ToPGPBytes for PKPacket<'_> {
+    fn to_formatted_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self.version {
             Version::V4 => {
@@ -881,7 +947,7 @@ mod test {
     fn public_key_serialization() {
         let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
 
-        println!("{:X?}", public_key.as_bytes());
+        println!("{:X?}", public_key.to_formatted_bytes());
     }
 
     #[test]
@@ -938,7 +1004,7 @@ mod test {
             hash: 0xfdcb,
         };
 
-        let binary_signature = signature.as_bytes();
+        let binary_signature = signature.to_formatted_bytes();
         let sample_signature = &[
             0x88, 0x75, 0x04, 0x00, 0x11, 0x08, 0x00, 0x1d, 0x16, 0x21, 0x04, 0x7d, 0x06, 0x3e,
             0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69, 0x7e, 0xcf, 0xe3, 0x54, 0x2a, 0xe0, 0x84,
