@@ -51,6 +51,11 @@ pub fn binary_to_radix64(buffer: &[u8]) -> Vec<u8> {
     encoded
 }
 
+/// Return the first four bytes corresponding to a big-endian encoded time.
+fn duration_to_bytes<'a>(duration: Duration) -> Vec<u8> {
+    duration.as_secs().to_be_bytes()[4..].to_vec()
+}
+
 /// Format an OpenPGP message into an ASCII-armored format.
 ///
 /// Armor header line, with a string surrounded by five dashes on either size of
@@ -62,7 +67,6 @@ fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
     let mut armor = Vec::new();
 
     armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
-
     armor.extend(binary_to_radix64(&buffer));
     armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
 
@@ -142,55 +146,19 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
-pub enum Packet {
-    PublicKey(PKPacket),
-    Signature(SignaturePacket),
+/// A structure representing a fully formed OpenPGP message.
+///
+/// Some OpenPGP packet semantics are positionally dependant in this representation,
+/// in a manner completely opaque to the user
+pub struct Message<'a> {
+    packets: Vec<Box<Packet<'a>>>,
+}
+
+pub enum Packet<'a> {
+    PublicKey(PKPacket<'a>),
+    Signature(SignaturePacket<'a>),
+    PartialSignature(PartialSignature<'a>),
     UserID(UserID),
-}
-
-// TODO Remove this
-pub struct PublicKeyMessage<'a> {
-    public_key: PKPacket<'a>,
-    user_id: UserID,
-    signature: SignaturePacket<'a>,
-}
-
-impl<'a> PublicKeyMessage<'a> {
-    pub fn new(
-        public_key: PKPacket<'a>,
-        user_id: UserID,
-        signature: SignaturePacket<'a>,
-    ) -> PublicKeyMessage<'a> {
-        PublicKeyMessage {
-            public_key,
-            user_id,
-            signature,
-        }
-    }
-
-    pub fn get_signing_portion(&mut self) -> Vec<u8> {
-        // TODO What does 'once the data body is hashed, then a trailer is hashed' mean in the
-        // standard? Does it mean that the two are concatenated and then hashed, or do
-
-        let mut buffer = vec![0x99];
-        let pk = self.public_key.as_bytes();
-        // TODO Strip header
-
-        let len = self.user_id.user.len() + self.user_id.email.len() + 2;
-        buffer.extend(&len.to_be_bytes()[4..]);
-        buffer.extend(self.signature.get_trailer());
-
-        buffer.extend(self.public_key.as_bytes());
-        buffer.extend(self.user_id.as_bytes());
-        buffer.extend(self.signature.get_trailer());
-
-        buffer
-    }
-
-    fn finalize_signature(&mut self, sig: PKAlgo<'a>, hash: u16) {
-        self.signature.hash = hash;
-        self.signature.pubkey_algo = sig;
-    }
 }
 
 #[repr(u8)]
@@ -203,32 +171,23 @@ enum Version {
 #[derive(Copy, Clone)]
 pub enum SigType {
     Binary = 0x00,
-    CanonicalText = 0x01,
-    Standalone = 0x02,
     UserIDPKCert = 0x10,
 }
 
-pub enum PKAlgo<'a> {
-    None,
-    DSA(&'a [u8], &'a [u8]),
+pub enum SignatureData<'a> {
     ECDSA(&'a [u8], &'a [u8]),
 }
 
-impl<'a> PKAlgo<'a> {
+#[repr(u8)]
+pub enum PublicKeyAlgorithm {
+    ECDSA = 0x13,
+}
+
+impl<'a> SignatureData<'a> {
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self {
-            PKAlgo::None => unreachable!(),
-            PKAlgo::ECDSA(r, s) => {
-                let r_len = get_mpi_bits(r);
-                buffer.extend_from_slice(&r_len.to_be_bytes());
-                buffer.extend_from_slice(r);
-
-                let s_len = get_mpi_bits(s);
-                buffer.extend(s_len.to_be_bytes());
-                buffer.extend_from_slice(s);
-            }
-            PKAlgo::DSA(r, s) => {
+            SignatureData::ECDSA(r, s) => {
                 let r_len = get_mpi_bits(r);
                 buffer.extend_from_slice(&r_len.to_be_bytes());
                 buffer.extend_from_slice(r);
@@ -279,7 +238,6 @@ enum HashAlgo {
     SHA2_512 = 10,
     SHA2_224 = 11,
     SHA3_256 = 12,
-    Reserved = 13,
     SHA3_512 = 14,
 }
 
@@ -406,6 +364,32 @@ enum SignatureSubpackets<'a> {
         hashable: bool,
         flags: KeyFlags,
     },
+}
+
+pub enum HSigSubpacket<'a> {
+    CreationTime(Duration),
+    Fingerprint(&'a [u8]),
+    KeyFlags(KeyFlags),
+    PreferredSymmetricAlgos(Vec<SymmetricAlgos>),
+    PreferredHashAlgos(Vec<HashAlgo>),
+    PreferredCompressionAlgos(Vec<CompressionAlgos>),
+    KeyServerPreference(u8),
+}
+
+pub enum SigSubpacket<'a> {
+    KeyID(&'a [u8]),
+}
+
+#[repr(u8)]
+pub enum SigSubpacketID {
+    CreationTime = 0x02,
+    PreferredSymmetricAlgos = 0x0b,
+    KeyID = 0x10,
+    PreferredHashAlgos = 0x15,
+    PreferredCompressionAlgos = 0x16,
+    KeyServerPreference = 0x17,
+    KeyFlags = 0x1b,
+    IssuerFingerprint = 0x21,
 }
 
 impl<'a> SignatureSubpackets<'a> {
@@ -649,18 +633,27 @@ impl<'a> PublicKey<'a> {
     }
 }
 
-pub struct SignaturePacket<'a> {
+/// A structure that holds signature metadata before the signature is computed.
+///
+/// While not mandated by the standard, we can view a Signature packet to be immutable,
+/// as the data it holds has been signed. However, in our model, the data that needs
+/// to be signed does not exist until we construct the signature, for which we need
+/// the signed data, meaning separating the two structures is preferred.
+pub struct PartialSignature<'a> {
     version: Version,
     sigtype: SigType,
-    pubkey_algo: PKAlgo<'a>,
+    pubkey_algo: PublicKeyAlgorithm,
     hash_algo: HashAlgo,
-    subpackets: Vec<SignatureSubpackets<'a>>,
-    hash: u16,
+    subpackets: Vec<HSigSubpacket<'a>>,
 }
 
-impl<'a> SignaturePacket<'a> {
-    pub fn new(sigtype: SigType, keyid: &'a str, time: Option<Duration>) -> SignaturePacket<'a> {
-        // TODO Under what conditions does this fail
+impl<'a> PartialSignature<'a> {
+    pub fn new(
+        sigtype: SigType,
+        pubkey_algo: PublicKeyAlgorithm,
+        time: Option<Duration>,
+    ) -> PartialSignature<'a> {
+        // TODO Move to a separate function
         let epoch = match time {
             Some(n) => n,
             None => match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -669,22 +662,39 @@ impl<'a> SignaturePacket<'a> {
             },
         };
 
-        let mut signature = SignaturePacket {
+        let mut partial_signature = PartialSignature {
             version: Version::V4,
             sigtype,
-            pubkey_algo: PKAlgo::None,
+            pubkey_algo,
             hash_algo: HashAlgo::SHA2_256,
-            subpackets: Vec::new(),
-            hash: 0,
+            subpackets: vec![],
         };
-        signature
-            .subpackets
-            .push(SignatureSubpackets::creation_time(epoch));
-        signature
-            .subpackets
-            .push(SignatureSubpackets::issuer_keyid(keyid.as_bytes()));
 
-        signature
+        partial_signature
+            .subpackets
+            .push(HSigSubpacket::CreationTime(epoch));
+
+        partial_signature
+    }
+
+    fn extend(&mut self, subpacket: HSigSubpacket<'a>) -> PartialSignature {
+        self.subpackets.push(subpacket);
+        *self
+    }
+}
+
+impl<'a> ToPGPBytes for PartialSignature<'a> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        let mut buffer = vec![
+            self.version as u8,
+            self.sigtype as u8,
+            self.pubkey_algo as u8,
+            self.hash_algo as u8,
+        ];
+        // TODO We're missing some stuff here
+
+
+        buffer
     }
 
     ///  
@@ -700,31 +710,12 @@ impl<'a> SignaturePacket<'a> {
     ///  - the two octets 0x04 and 0xFF,
     ///  - a four-octet big-endian number that is the length of the hashed data from the
     /// Signature packet stopping right before the 0x04, 0xff octets. */
-    fn get_trailer(&self) -> Vec<u8> {
-        let mut hashable = self.get_hashable();
-        let len = hashable.len() as u64;
-
-        hashable.extend(&[0x04, 0xFF]);
-        hashable.extend(&len.to_be_bytes());
-        hashable
-    }
-
-    fn get_hashable(&self) -> Vec<u8> {
-        let mut contents = vec![
-            self.version as u8,
-            self.sigtype as u8,
-            match self.pubkey_algo {
-                PKAlgo::None => unreachable!(),
-                PKAlgo::DSA(_, _) => 0x11,
-                PKAlgo::ECDSA(_, _) => 0x13,
-            },
-            self.hash_algo as u8,
-        ];
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        // TOOD Finish this
 
         let mut subpacket_count: u16 = 0;
         let mut temp: Vec<u8> = Vec::new();
         for subpacket in self.subpackets.iter() {
-            if subpacket.hashable() {
                 let subpacket_bytes = subpacket.as_bytes();
                 subpacket_count += subpacket_bytes.len() as u16;
                 temp.extend(subpacket.as_bytes());
@@ -733,23 +724,15 @@ impl<'a> SignaturePacket<'a> {
 
         contents.extend(subpacket_count.to_be_bytes());
         contents.extend(&temp);
+        let len = contents.len() as u64;
+
+        contents.extend(&[0x04, 0xFF]);
+        contents.extend(&len.to_be_bytes());
         contents
-    }
-}
-
-// TODO Add context
-impl<'a> ToPGPBytes for SignaturePacket<'a> {
-    fn to_hashable_bytes(&self) {
-        let mut hashable = self.get_hashable();
-        let len = hashable.len() as u64;
-
-        hashable.extend(&[0x04, 0xFF]);
-        hashable.extend(&len.to_be_bytes());
-        hashable
     }
 
     fn to_formatted_bytes(&self) -> Vec<u8> {
-        let mut contents = self.get_hashable();
+        let mut contents = self.to_hashable_bytes();
         let mut unhashed: Vec<u8> = Vec::new();
         for subpacket in self.subpackets.iter() {
             if !subpacket.hashable() {
@@ -761,8 +744,8 @@ impl<'a> ToPGPBytes for SignaturePacket<'a> {
         contents.extend(self.hash.to_be_bytes());
 
         // Figuring out the proper MPI sizes to end off the signature packet
-        let mpis = self.pubkey_algo.as_bytes();
-        contents.extend(mpis);
+        /* let mpis = self.;
+        contents.extend(mpis); */
         // TODO Figure out a nicer way of writing this
         let mut header = calculate_packet_header(&contents, PacketHeader::Signature);
         header.extend(contents);
@@ -771,8 +754,26 @@ impl<'a> ToPGPBytes for SignaturePacket<'a> {
     }
 }
 
-fn duration_to_bytes<'a>(duration: Duration) -> Vec<u8> {
-    duration.as_secs().to_be_bytes()[4..].to_vec()
+pub struct Signature<'a> {
+    partial: PartialSignature<'a>,
+    subpackets: Vec<SigSubpacket<'a>>,
+    hash: [u8; 2],
+    signature: SignatureData<'a>,
+}
+
+impl<'a> Signature<'a> {
+    fn new(
+        partial: PartialSignature<'a>,
+        hash: [u8; 2],
+        signature: SignatureData<'a>,
+    ) -> Signature<'a> {
+        Signature {
+            partial,
+            subpackets: vec![],
+            hash,
+            signature,
+        }
+    }
 }
 
 // TODO Remove the pub!
@@ -782,11 +783,22 @@ pub struct UserID {
 }
 
 impl ToPGPBytes for UserID {
-    fn to_formatted_bytes(&self) -> Vec<u8> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
         let body = format!("{} <{}>", self.user, self.email);
-        let body_bytes = body.as_bytes();
-        let mut header = calculate_packet_header(body_bytes, PacketHeader::UserID);
-        header.extend(body_bytes);
+        body.as_bytes().to_vec()
+    }
+
+    fn to_formatted_bytes(&self) -> Vec<u8> {
+        let body = self.to_raw_bytes();
+        let mut header = calculate_packet_header(&body, PacketHeader::UserID);
+        header.extend(body);
+        header
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        let body = self.to_raw_bytes();
+        let mut header = body.len().to_be_bytes().to_vec();
+        header.extend(body);
         header
     }
 }
@@ -880,6 +892,14 @@ impl ToPGPBytes for PKPacket<'_> {
         header.extend(buffer);
 
         header
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        vec![]
     }
 }
 
@@ -975,10 +995,11 @@ mod test {
 
     #[test]
     fn signature_serialization() {
-        let signature = SignaturePacket {
+        let signature = PartialSignature {
             version: Version::V4,
             sigtype: SigType::Binary,
-            pubkey_algo: PKAlgo::DSA(
+            pubkey_algo: PublicKeyAlgorithm::ECDSA,
+            /* pubkey_algo: PKAlgo::DSA(
                 &[
                     0x6a, 0x39, 0xfd, 0x93, 0x6c, 0xcb, 0xb6, 0x56, 0xd3, 0x2c, 0x39, 0x1a, 0xd8,
                     0xb0, 0xa1, 0x78, 0x7d, 0x89, 0x87, 0x19, 0xd7, 0x7f, 0x50, 0x54, 0xb2, 0xcf,
@@ -989,20 +1010,25 @@ mod test {
                     0xf9, 0xff, 0xc8, 0x1d, 0xa2, 0x95, 0xae, 0x2f, 0x6d, 0x9a, 0x6b, 0xd2, 0xa5,
                     0x3f, 0x96, 0x56, 0xea, 0x10, 0xae,
                 ],
-            ),
+            ), */
             hash_algo: HashAlgo::SHA2_256,
             subpackets: vec![
-                SignatureSubpackets::fingerprint(&[
+                HSigSubpacket::Fingerprint(&[
                     0x7d, 0x06, 0x3e, 0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69, 0x7e, 0xcf, 0xe3,
                     0x54, 0x2a, 0xe0, 0x84, 0xdb, 0x79, 0x6c,
                 ]),
-                SignatureSubpackets::creation_time(Duration::from_secs(0x60d985ae)),
-                SignatureSubpackets::issuer_keyid(&[
-                    0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C,
-                ]),
+                HSigSubpacket::CreationTime(Duration::from_secs(0x60d985ae)),
             ],
-            hash: 0xfdcb,
+            // hash: 0xfdcb,
         };
+        
+
+
+
+
+                /* HSigSubpacket::(&[
+                    0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C,
+                ]), */
 
         let binary_signature = signature.to_formatted_bytes();
         let sample_signature = &[
