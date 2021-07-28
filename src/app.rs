@@ -59,17 +59,16 @@ pub fn keygen_subcommand(
         email: git::get_user_email(),
     };
 
-    let user_id = pub_key.keyid();
+    /* let user_id = pub_key.keyid();
     let signature =
         SignaturePacket::new(SigType::UserIDPKCert, &user_id, Some(pub_key.creation_time));
     
-    let message = PublicKeyMessage::new(pub_key, user_packet, signature);
-    let msg = message.get_signing_portion() 
+    let msg = message.get_signing_portion();
     
     // protocol::signing::distributed_sign()
 
 
-    fs::write(key_file, message).expect("File already exists");
+    fs::write(key_file, message).expect("File already exists"); */
 
     Ok(())
 }

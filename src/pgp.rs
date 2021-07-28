@@ -13,6 +13,14 @@ const BIN_TO_ASCII: [u8; 64] = [
     115, 116, 117, 118, 119, 120, 121, 122, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 43, 47,
 ];
 
+/// Convert a byte buffer from a binaru representation to radix64.
+///
+/// It should be noted that the radix64 representation mentioned in the standard
+/// is equivalent to base64, but integrating yet another crate for the purpose
+/// did not seem to be a great idea.
+///
+/// The implementation below has been ported from the [pgpdump](https://github.com/kazu-yamamoto/pgpdump)
+/// project.
 pub fn binary_to_radix64(buffer: &[u8]) -> Vec<u8> {
     let mut encoded: Vec<u8> = Vec::with_capacity((buffer.len() + 2) / 3 * 4 + 1);
     let rem = buffer.len() % 3;
@@ -131,6 +139,8 @@ fn get_mpi_bits(mpi: &[u8]) -> u16 {
     count
 }
 
+/// Format the length of a subpacket to comply with the standard specification.
+///
 fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     let fst_ind = buffer.partition_point(|&x| x == 0);
     let fst_byte = buffer[fst_ind];
@@ -146,6 +156,22 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
+/// Fill a buffer with an elliptic curve point formatted as an MPI.
+///
+/// The MPI encoding of EC points is a little different. The point
+/// contains metadata on its own compression level by way of its
+/// first byte. This byte is concatenated with the x and y values
+/// of the EC point. This whole bitstring is then treated as the
+/// MPI and serialized.
+fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
+    let length =
+        get_mpi_bits(x) + get_mpi_bits(y) + get_mpi_bits(&[ECPointCompression::Uncompressed as u8]);
+    buffer.extend_from_slice(&length.to_be_bytes());
+    buffer.push(ECPointCompression::Uncompressed as u8);
+    buffer.extend_from_slice(x);
+    buffer.extend_from_slice(y);
+}
+
 /// A structure representing a fully formed OpenPGP message.
 ///
 /// Some OpenPGP packet semantics are positionally dependant in this representation,
@@ -156,7 +182,7 @@ pub struct Message<'a> {
 
 pub enum Packet<'a> {
     PublicKey(PKPacket<'a>),
-    Signature(SignaturePacket<'a>),
+    Signature(Signature<'a>),
     PartialSignature(PartialSignature<'a>),
     UserID(UserID),
 }
@@ -174,17 +200,18 @@ pub enum SigType {
     UserIDPKCert = 0x10,
 }
 
-pub enum SignatureData<'a> {
-    ECDSA(&'a [u8], &'a [u8]),
-}
-
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum PublicKeyAlgorithm {
     ECDSA = 0x13,
 }
 
-impl<'a> SignatureData<'a> {
-    pub fn as_bytes(&self) -> Vec<u8> {
+pub enum SignatureData<'a> {
+    ECDSA(&'a [u8], &'a [u8]),
+}
+
+impl<'a> ToPGPBytes for SignatureData<'a> {
+    fn to_formatted_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self {
             SignatureData::ECDSA(r, s) => {
@@ -198,6 +225,14 @@ impl<'a> SignatureData<'a> {
             }
         }
         buffer
+    }
+
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        self.to_formatted_bytes()
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        self.to_formatted_bytes()
     }
 }
 
@@ -229,7 +264,7 @@ pub trait ToPGPBytes {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum HashAlgo {
+pub enum HashAlgo {
     MD5 = 1,
     SHA1 = 2,
     RIPEMD160 = 3,
@@ -243,7 +278,7 @@ enum HashAlgo {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum SymmetricAlgos {
+pub enum SymmetricAlgos {
     Plaintext = 0x00,
     IDEA = 0x01,
     TripleDES = 0x02,
@@ -254,7 +289,7 @@ enum SymmetricAlgos {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum CompressionAlgos {
+pub enum CompressionAlgos {
     Uncompressed = 0x00,
     ZIP = 0x01,
     ZLIB = 0x02,
@@ -263,7 +298,7 @@ enum CompressionAlgos {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum KeyFlags {
+pub enum KeyFlags {
     CanCertifyKeys = 0x01,
     CanSign = 0x02,
     CanEncrypt = 0x04,
@@ -315,57 +350,6 @@ impl Index<CurveOID> for CurveRepr {
     }
 }
 
-pub enum PublicKey<'a> {
-    ECDSA(CurveOID, &'a [u8], &'a [u8]),
-    RSA(&'a [u8], &'a [u8]),
-}
-
-// Note: we can compute the issuer fingerprint by computing the hash of the
-// public key as specified in RFC 4880, Section 12.2
-enum SignatureSubpackets<'a> {
-    CreationTime {
-        id: u8,
-        hashable: bool,
-        time: Duration,
-    },
-    IssuerFingerprint {
-        id: u8,
-        hashable: bool,
-        version: Version,
-        fingerprint: &'a [u8],
-    },
-    IssuerKeyID {
-        id: u8,
-        hashable: bool,
-        keyid: &'a [u8],
-    },
-    PreferredHashAlgos {
-        id: u8,
-        hashable: bool,
-        algos: Vec<HashAlgo>,
-    },
-    PreferredSymmetricAlgos {
-        id: u8,
-        hashable: bool,
-        algos: Vec<SymmetricAlgos>,
-    },
-    PreferredCompressionAlgos {
-        id: u8,
-        hashable: bool,
-        algos: Vec<CompressionAlgos>,
-    },
-    KeyServerPreference {
-        id: u8,
-        hashable: bool,
-        flags: Vec<u8>,
-    },
-    KeyFlags {
-        id: u8,
-        hashable: bool,
-        flags: KeyFlags,
-    },
-}
-
 pub enum HSigSubpacket<'a> {
     CreationTime(Duration),
     Fingerprint(&'a [u8]),
@@ -392,232 +376,110 @@ pub enum SigSubpacketID {
     IssuerFingerprint = 0x21,
 }
 
-impl<'a> SignatureSubpackets<'a> {
-    pub fn creation_time(time: Duration) -> SignatureSubpackets<'a> {
-        SignatureSubpackets::CreationTime {
-            id: 0x02,
-            hashable: true,
-            time,
-        }
-    }
-
-    /// Create a fingerprint subpacket attached to a Signature packet.
-    ///
-    /// The fingerprint of a signature is the SHA1 hash of its hashed section.
-    pub fn fingerprint(fingerprint: &'a [u8]) -> SignatureSubpackets<'a> {
-        SignatureSubpackets::IssuerFingerprint {
-            id: 0x21,
-            version: Version::V4,
-            hashable: true,
-            fingerprint,
-        }
-    }
-
-    /// Create a keyid subpacket attached to a Signature packet.
-    ///
-    /// The key ID of a signature is the lowest 64 bits of its SHA1 hash.
-    pub fn issuer_keyid(keyid: &'a [u8]) -> SignatureSubpackets<'a> {
-        SignatureSubpackets::IssuerKeyID {
-            id: 0x10,
-            hashable: false,
-            keyid,
-        }
-    }
-
-    pub fn others() -> Vec<SignatureSubpackets<'a>> {
-        vec![
-            SignatureSubpackets::KeyFlags {
-                id: 0x1b,
-                hashable: true,
-                flags: KeyFlags::CanSign,
-            },
-            SignatureSubpackets::PreferredSymmetricAlgos {
-                id: 0x0b,
-                hashable: true,
-                algos: vec![
-                    SymmetricAlgos::AES256,
-                    SymmetricAlgos::AES192,
-                    SymmetricAlgos::AES128,
-                    SymmetricAlgos::TripleDES,
-                ],
-            },
-            SignatureSubpackets::PreferredHashAlgos {
-                id: 0x15,
-                hashable: true,
-                algos: vec![HashAlgo::SHA1, HashAlgo::RIPEMD160, HashAlgo::MD5],
-            },
-            SignatureSubpackets::PreferredCompressionAlgos {
-                id: 0x16,
-                hashable: true,
-                algos: vec![CompressionAlgos::BZip2],
-            },
-            SignatureSubpackets::KeyServerPreference {
-                id: 0x17,
-                hashable: true,
-                flags: vec![0x80],
-            },
-        ]
-    }
-
-    pub fn as_bytes(&self) -> Vec<u8> {
-        let mut buffer = Vec::<u8>::new();
+impl<'a> ToPGPBytes for HSigSubpacket<'a> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
         match self {
-            SignatureSubpackets::IssuerFingerprint {
-                id,
-                hashable: _,
-                version,
-                fingerprint,
-            } => {
-                let mut bytes = (fingerprint.len() + 2).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut bytes));
-                buffer.push(*id);
-                buffer.push(*version as u8);
-                buffer.extend_from_slice(fingerprint);
+            HSigSubpacket::CreationTime(duration) => buffer.extend(duration_to_bytes(*duration)),
+            HSigSubpacket::Fingerprint(fingerprint) => buffer.extend(*fingerprint),
+            HSigSubpacket::KeyFlags(flags) => buffer.push(*flags as u8),
+            HSigSubpacket::PreferredSymmetricAlgos(algos) => {
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
             }
-            SignatureSubpackets::CreationTime {
-                id,
-                hashable: _,
-                time,
-            } => {
-                let time = duration_to_bytes(*time);
-                buffer.extend(format_subpacket_length(&mut (time.len() + 1).to_be_bytes()));
-                // Creation time packet tag
-                buffer.push(*id);
-                // Big-endian epoch time
-                buffer.extend(time);
+            HSigSubpacket::PreferredHashAlgos(algos) => {
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
             }
-            SignatureSubpackets::IssuerKeyID {
-                id,
-                hashable: _,
-                keyid,
-            } => {
-                let mut len = (keyid.len() + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.extend_from_slice(keyid);
+            HSigSubpacket::PreferredCompressionAlgos(algos) => {
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
             }
-            SignatureSubpackets::KeyFlags {
-                id,
-                hashable: _,
-                flags,
-            } => {
-                let mut len = (1 as usize + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.push(*flags as u8);
-            }
-            SignatureSubpackets::PreferredSymmetricAlgos {
-                id,
-                hashable: _,
-                algos,
-            } => {
-                let mut len = (algos.len() + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.extend(algos.iter().map(|item| *item as u8));
-            }
-            SignatureSubpackets::PreferredHashAlgos {
-                id,
-                hashable: _,
-                algos,
-            } => {
-                let mut len = (algos.len() + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.extend(algos.iter().map(|item| *item as u8));
-            }
-            SignatureSubpackets::PreferredCompressionAlgos {
-                id,
-                hashable: _,
-                algos,
-            } => {
-                let mut len = (algos.len() + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.extend(algos.iter().map(|item| *item as u8));
-            }
-            SignatureSubpackets::KeyServerPreference {
-                id,
-                hashable: _,
-                flags,
-            } => {
-                let mut len = (flags.len() + 1).to_be_bytes();
-                buffer.extend(format_subpacket_length(&mut len));
-                buffer.push(*id);
-                buffer.extend(flags.iter().map(|item| *item as u8));
-            }
-        }
+            HSigSubpacket::KeyServerPreference(pref) => buffer.push(*pref as u8),
+        };
         buffer
     }
 
-    pub fn hashable(&self) -> bool {
+    fn to_formatted_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
         match self {
-            SignatureSubpackets::IssuerFingerprint {
-                id: _,
-                hashable,
-                version: _,
-                fingerprint: _,
-            } => *hashable,
-            SignatureSubpackets::CreationTime {
-                id: _,
-                hashable,
-                time: _,
-            } => *hashable,
-            SignatureSubpackets::IssuerKeyID {
-                id: _,
-                hashable,
-                keyid: _,
-            } => *hashable,
-            SignatureSubpackets::PreferredHashAlgos {
-                id: _,
-                hashable,
-                algos: _,
-            } => *hashable,
-            SignatureSubpackets::PreferredSymmetricAlgos {
-                id: _,
-                hashable,
-                algos: _,
-            } => *hashable,
-            SignatureSubpackets::PreferredCompressionAlgos {
-                id: _,
-                hashable,
-                algos: _,
-            } => *hashable,
-            SignatureSubpackets::KeyServerPreference {
-                id: _,
-                hashable,
-                flags: _,
-            } => *hashable,
-            SignatureSubpackets::KeyFlags {
-                id: _,
-                hashable,
-                flags: _,
-            } => *hashable,
-        }
+            HSigSubpacket::CreationTime(duration) => {
+                let duration = duration_to_bytes(*duration);
+                let mut length = (duration.len() + 1).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::CreationTime as u8);
+                buffer.extend(duration);
+            }
+            HSigSubpacket::Fingerprint(fingerprint) => {
+                let mut length = (fingerprint.len() + 1).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::IssuerFingerprint as u8);
+                buffer.extend(*fingerprint)
+            }
+            HSigSubpacket::KeyFlags(flags) => {
+                let mut length = (2 as usize).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::KeyFlags as u8);
+                buffer.push(*flags as u8);
+            }
+            HSigSubpacket::PreferredSymmetricAlgos(algos) => {
+                let mut length = (algos.len() + 1).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::PreferredSymmetricAlgos as u8);
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
+            }
+            HSigSubpacket::PreferredHashAlgos(algos) => {
+                let mut length = (algos.len() + 1).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::PreferredSymmetricAlgos as u8);
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>());
+            }
+            HSigSubpacket::PreferredCompressionAlgos(algos) => {
+                let mut length = (algos.len() + 1).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::PreferredSymmetricAlgos as u8);
+                buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
+            }
+            HSigSubpacket::KeyServerPreference(pref) => {
+                let mut length = (2 as usize).to_be_bytes();
+                buffer.extend_from_slice(format_subpacket_length(&mut length));
+                buffer.push(SigSubpacketID::KeyServerPreference as u8);
+                buffer.push(*pref as u8);
+            }
+        };
+        buffer
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        self.to_formatted_bytes()
     }
 }
 
-impl<'a> PublicKey<'a> {
-    fn as_bytes(&self) -> Vec<u8> {
+impl<'a> ToPGPBytes for SigSubpacket<'a> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    fn to_formatted_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+pub enum PublicKey<'a> {
+    ECDSA(CurveOID, &'a [u8], &'a [u8]),
+    RSA(&'a [u8], &'a [u8]),
+}
+
+impl<'a> ToPGPBytes for PublicKey<'a> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self {
             PublicKey::ECDSA(oid, key_x, key_y) => {
                 buffer.push(CURVE_REPR[*oid].len() as u8);
                 buffer.extend(CURVE_REPR[*oid]);
 
-                // The MPI encoding of EC points is a little different. The point
-                // contains metadata on its own compression level by way of its
-                // first byte. This byte is concatenated with the x and y values
-                // of the EC point. This whole bitstring is then treated as the
-                // MPI and serialized into the key
-                let mut mpi = Vec::new();
-                mpi.push(0x04);
-                mpi.extend_from_slice(key_x);
-                mpi.extend_from_slice(key_y);
-
-                let bit_count = get_mpi_bits(&mpi);
-                buffer.extend(bit_count.to_be_bytes());
-                buffer.extend(mpi);
+                format_ec_point(&mut buffer, key_x, key_y);
             }
             PublicKey::RSA(n, e) => {
                 let n_bits = get_mpi_bits(n);
@@ -630,6 +492,14 @@ impl<'a> PublicKey<'a> {
             }
         }
         buffer
+    }
+
+    fn to_formatted_bytes(&self) -> Vec<u8> {
+        self.to_raw_bytes()
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        self.to_raw_bytes()
     }
 }
 
@@ -676,11 +546,6 @@ impl<'a> PartialSignature<'a> {
 
         partial_signature
     }
-
-    fn extend(&mut self, subpacket: HSigSubpacket<'a>) -> PartialSignature {
-        self.subpackets.push(subpacket);
-        *self
-    }
 }
 
 impl<'a> ToPGPBytes for PartialSignature<'a> {
@@ -691,13 +556,17 @@ impl<'a> ToPGPBytes for PartialSignature<'a> {
             self.pubkey_algo as u8,
             self.hash_algo as u8,
         ];
-        // TODO We're missing some stuff here
-
-
+        let mut hashable_subpackets = self
+            .subpackets
+            .iter()
+            .map(|subpkt| subpkt.to_formatted_bytes())
+            .flatten()
+            .collect::<Vec<u8>>();
+        buffer.extend(&hashable_subpackets.len().to_be_bytes()[6..]);
+        buffer.append(&mut hashable_subpackets);
         buffer
     }
 
-    ///  
     /// A V4 signature hashes the packet body starting from its first field, the
     /// version number, through the end of the hashed subpacket data and a final
     /// extra trailer. Thus, the hashed fields are:
@@ -705,26 +574,14 @@ impl<'a> ToPGPBytes for PartialSignature<'a> {
     ///  - the signature type,
     ///  - the public-key algorithm,
     ///  - the hash algorithm,
-    ///  - the hashed subpacket length,
+    ///  - the hashed subpacket length (two octets),
     ///  - the hashed subpacket body,
     ///  - the two octets 0x04 and 0xFF,
     ///  - a four-octet big-endian number that is the length of the hashed data from the
     /// Signature packet stopping right before the 0x04, 0xff octets. */
     fn to_hashable_bytes(&self) -> Vec<u8> {
-        // TOOD Finish this
-
-        let mut subpacket_count: u16 = 0;
-        let mut temp: Vec<u8> = Vec::new();
-        for subpacket in self.subpackets.iter() {
-                let subpacket_bytes = subpacket.as_bytes();
-                subpacket_count += subpacket_bytes.len() as u16;
-                temp.extend(subpacket.as_bytes());
-            }
-        }
-
-        contents.extend(subpacket_count.to_be_bytes());
-        contents.extend(&temp);
-        let len = contents.len() as u64;
+        let mut contents = self.to_raw_bytes();
+        let len = contents.len() as u32;
 
         contents.extend(&[0x04, 0xFF]);
         contents.extend(&len.to_be_bytes());
@@ -733,23 +590,9 @@ impl<'a> ToPGPBytes for PartialSignature<'a> {
 
     fn to_formatted_bytes(&self) -> Vec<u8> {
         let mut contents = self.to_hashable_bytes();
-        let mut unhashed: Vec<u8> = Vec::new();
-        for subpacket in self.subpackets.iter() {
-            if !subpacket.hashable() {
-                unhashed.extend(subpacket.as_bytes());
-            }
-        }
-        contents.extend((unhashed.len() as u16).to_be_bytes());
-        contents.extend(&unhashed);
-        contents.extend(self.hash.to_be_bytes());
 
-        // Figuring out the proper MPI sizes to end off the signature packet
-        /* let mpis = self.;
-        contents.extend(mpis); */
-        // TODO Figure out a nicer way of writing this
         let mut header = calculate_packet_header(&contents, PacketHeader::Signature);
-        header.extend(contents);
-
+        header.append(&mut contents);
         header
     }
 }
@@ -776,7 +619,37 @@ impl<'a> Signature<'a> {
     }
 }
 
-// TODO Remove the pub!
+impl<'a> ToPGPBytes for Signature<'a> {
+    fn to_raw_bytes(&self) -> Vec<u8> {
+        let mut partial_signature = self.partial.to_raw_bytes();
+
+        let regular_subpackets = self
+            .subpackets
+            .iter()
+            .map(|subpkt| subpkt.to_formatted_bytes())
+            .flatten()
+            .collect::<Vec<u8>>();
+        let subpacket_len = regular_subpackets.len() as u16;
+        partial_signature.extend(subpacket_len.to_be_bytes());
+        partial_signature.extend(regular_subpackets);
+        partial_signature.extend(self.signature.to_formatted_bytes());
+
+        partial_signature
+    }
+
+    fn to_formatted_bytes(&self) -> Vec<u8> {
+        let mut buffer = self.partial.to_raw_bytes();
+        let mut header = calculate_packet_header(&buffer, PacketHeader::Signature);
+        header.append(&mut buffer);
+
+        header
+    }
+
+    fn to_hashable_bytes(&self) -> Vec<u8> {
+        self.partial.to_hashable_bytes()
+    }
+}
+
 pub struct UserID {
     pub user: String,
     pub email: String,
@@ -810,9 +683,6 @@ pub struct PKPacket<'a> {
     public_key: PublicKey<'a>,
 }
 
-// TODO RFC 4880 mentions that "A primary key capable of making signatures SHOULD be
-// accompanied by either a certification signature (on a User ID or User Attribute) or
-// a signature directly on the key.", which we are not doing for the sake of brevity
 impl<'a> PKPacket<'a> {
     pub fn new(public_key: PublicKey<'a>, time: Option<Duration>) -> PKPacket<'a> {
         let epoch = match time {
@@ -845,7 +715,7 @@ impl<'a> PKPacket<'a> {
             PublicKey::ECDSA(_, _, _) => 0x13,
             PublicKey::RSA(_, _) => 0x01,
         });
-        buffer.extend(self.public_key.as_bytes());
+        buffer.extend(self.public_key.to_raw_bytes());
         // TODO Is there any better way of doing this?
         let total_len = ((buffer.len() - 3) as u16).to_be_bytes();
         buffer[1] = total_len[0];
@@ -884,7 +754,7 @@ impl ToPGPBytes for PKPacket<'_> {
                 });
                 assert_eq!(buffer.len(), 6);
 
-                buffer.extend(self.public_key.as_bytes());
+                buffer.extend(self.public_key.to_raw_bytes());
             }
         }
 
@@ -995,11 +865,23 @@ mod test {
 
     #[test]
     fn signature_serialization() {
-        let signature = PartialSignature {
+        let partial_signature = PartialSignature {
             version: Version::V4,
             sigtype: SigType::Binary,
             pubkey_algo: PublicKeyAlgorithm::ECDSA,
-            /* pubkey_algo: PKAlgo::DSA(
+            hash_algo: HashAlgo::SHA2_256,
+            subpackets: vec![
+                HSigSubpacket::Fingerprint(&[
+                    0x7d, 0x06, 0x3e, 0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69, 0x7e, 0xcf, 0xe3,
+                    0x54, 0x2a, 0xe0, 0x84, 0xdb, 0x79, 0x6c,
+                ]),
+                HSigSubpacket::CreationTime(Duration::from_secs(0x60d985ae)),
+            ],
+        };
+        let mut signature = Signature::new(
+            partial_signature,
+            [0xfd, 0xcb],
+            SignatureData::ECDSA(
                 &[
                     0x6a, 0x39, 0xfd, 0x93, 0x6c, 0xcb, 0xb6, 0x56, 0xd3, 0x2c, 0x39, 0x1a, 0xd8,
                     0xb0, 0xa1, 0x78, 0x7d, 0x89, 0x87, 0x19, 0xd7, 0x7f, 0x50, 0x54, 0xb2, 0xcf,
@@ -1010,27 +892,14 @@ mod test {
                     0xf9, 0xff, 0xc8, 0x1d, 0xa2, 0x95, 0xae, 0x2f, 0x6d, 0x9a, 0x6b, 0xd2, 0xa5,
                     0x3f, 0x96, 0x56, 0xea, 0x10, 0xae,
                 ],
-            ), */
-            hash_algo: HashAlgo::SHA2_256,
-            subpackets: vec![
-                HSigSubpacket::Fingerprint(&[
-                    0x7d, 0x06, 0x3e, 0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69, 0x7e, 0xcf, 0xe3,
-                    0x54, 0x2a, 0xe0, 0x84, 0xdb, 0x79, 0x6c,
-                ]),
-                HSigSubpacket::CreationTime(Duration::from_secs(0x60d985ae)),
-            ],
-            // hash: 0xfdcb,
-        };
-        
+            ),
+        );
 
+        signature.subpackets.push(SigSubpacket::KeyID(&[
+            0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C
+        ]));
 
-
-
-                /* HSigSubpacket::(&[
-                    0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C,
-                ]), */
-
-        let binary_signature = signature.to_formatted_bytes();
+        let signature_bytes = signature.to_formatted_bytes();
         let sample_signature = &[
             0x88, 0x75, 0x04, 0x00, 0x11, 0x08, 0x00, 0x1d, 0x16, 0x21, 0x04, 0x7d, 0x06, 0x3e,
             0x54, 0xf2, 0xe9, 0xa3, 0x9e, 0x8f, 0x69, 0x7e, 0xcf, 0xe3, 0x54, 0x2a, 0xe0, 0x84,
@@ -1043,7 +912,7 @@ mod test {
             0xa5, 0x3f, 0x96, 0x56, 0xea, 0x10, 0xae,
         ];
 
-        assert_eq!(binary_signature, sample_signature);
+        assert_eq!(signature_bytes, sample_signature);
     }
 
     #[test]
