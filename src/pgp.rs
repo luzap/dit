@@ -203,6 +203,8 @@ pub enum SigType {
 #[repr(u8)]
 #[derive(Copy, Clone)]
 pub enum PublicKeyAlgorithm {
+    RSASE = 0x01,
+    DSA = 0x11,
     ECDSA = 0x13,
 }
 
@@ -454,15 +456,35 @@ impl<'a> ToPGPBytes for HSigSubpacket<'a> {
 
 impl<'a> ToPGPBytes for SigSubpacket<'a> {
     fn to_raw_bytes(&self) -> Vec<u8> {
-        vec![]
+        let mut buffer = Vec::new();
+        match self {
+            SigSubpacket::KeyID(keyid) => buffer.extend(*keyid),
+        };
+        buffer
     }
 
     fn to_formatted_bytes(&self) -> Vec<u8> {
-        vec![]
+        let mut buffer = Vec::new();
+        match self {
+            SigSubpacket::KeyID(keyid) => {
+                let mut len = (keyid.len() + 1).to_be_bytes();
+                buffer.extend(format_subpacket_length(&mut len));
+                buffer.push(SigSubpacketID::KeyID as u8);
+                buffer.extend(*keyid)
+            }
+        };
+        buffer
     }
 
     fn to_hashable_bytes(&self) -> Vec<u8> {
-        vec![]
+        let mut buffer = vec![0xb4];
+        match self {
+            SigSubpacket::KeyID(keyid) => {
+                buffer.extend_from_slice(&(keyid.len() as u32).to_be_bytes());
+                buffer.extend_from_slice(keyid);
+            }
+        };
+        buffer
     }
 }
 
@@ -632,13 +654,14 @@ impl<'a> ToPGPBytes for Signature<'a> {
         let subpacket_len = regular_subpackets.len() as u16;
         partial_signature.extend(subpacket_len.to_be_bytes());
         partial_signature.extend(regular_subpackets);
+        partial_signature.extend_from_slice(&self.hash);
         partial_signature.extend(self.signature.to_formatted_bytes());
 
         partial_signature
     }
 
     fn to_formatted_bytes(&self) -> Vec<u8> {
-        let mut buffer = self.partial.to_raw_bytes();
+        let mut buffer = self.to_raw_bytes();
         let mut header = calculate_packet_header(&buffer, PacketHeader::Signature);
         header.append(&mut buffer);
 
@@ -667,11 +690,16 @@ impl ToPGPBytes for UserID {
         header.extend(body);
         header
     }
-
+    /// A certification signature (type 0x10 through 0x13) hashes the User ID being 
+    /// bound to the key into the hash context after the above data. A V4 or V5 
+    /// certification hashes the constant 0xB4 for User ID certifications or the 
+    /// constant 0xD1 for User Attribute certifications, followed by a four-octet 
+    /// number giving the length of the User ID or User Attribute data, and then the 
+    /// User ID or User Attribute data.
     fn to_hashable_bytes(&self) -> Vec<u8> {
-        let body = self.to_raw_bytes();
-        let mut header = body.len().to_be_bytes().to_vec();
-        header.extend(body);
+        let mut body = self.to_raw_bytes();
+        let mut header = (body.len() as u32).to_be_bytes().to_vec();
+        header.append(&mut body);
         header
     }
 }
@@ -712,8 +740,8 @@ impl<'a> PKPacket<'a> {
         ];
         buffer.extend(duration_to_bytes(self.creation_time));
         buffer.push(match self.public_key {
-            PublicKey::ECDSA(_, _, _) => 0x13,
-            PublicKey::RSA(_, _) => 0x01,
+            PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA as u8,
+            PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE as u8,
         });
         buffer.extend(self.public_key.to_raw_bytes());
         // TODO Is there any better way of doing this?
@@ -765,6 +793,8 @@ impl ToPGPBytes for PKPacket<'_> {
     }
 
     fn to_hashable_bytes(&self) -> Vec<u8> {
+        let mut buffer = vec![0x99];
+
         vec![]
     }
 
@@ -863,12 +893,14 @@ mod test {
         );
     }
 
+    // TODO I don't know what's happening here anymore, so let's instead try to revamp this with a 
+    // secp256k1 signature 
     #[test]
     fn signature_serialization() {
         let partial_signature = PartialSignature {
             version: Version::V4,
             sigtype: SigType::Binary,
-            pubkey_algo: PublicKeyAlgorithm::ECDSA,
+            pubkey_algo: PublicKeyAlgorithm::DSA,
             hash_algo: HashAlgo::SHA2_256,
             subpackets: vec![
                 HSigSubpacket::Fingerprint(&[
@@ -896,7 +928,7 @@ mod test {
         );
 
         signature.subpackets.push(SigSubpacket::KeyID(&[
-            0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C
+            0xE3, 0x54, 0x2A, 0xE0, 0x84, 0xDB, 0x79, 0x6C,
         ]));
 
         let signature_bytes = signature.to_formatted_bytes();
