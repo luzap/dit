@@ -2,7 +2,6 @@
 // 1. Create a `Writer` struct that would take care of keeping track of the current
 // writes. This should wrap a vector with some given capacity
 
-use hex;
 use sha1::{Digest, Sha1};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
@@ -760,7 +759,11 @@ impl<'a> PKPacket<'a> {
     pub fn keyid(&self) -> String {
         let hash = self.get_hashed_subsection();
         let len = hash.len();
-        hex::encode_upper(&hash[len - 8..])
+        hash[len - 8..]
+            .iter()
+            .map(|hex| format!("{:02X}", hex))
+            .collect::<Vec<String>>()
+            .join("")
     }
 
     pub fn fingerprint(&self) -> Vec<u8> {
@@ -867,12 +870,13 @@ mod test {
     fn public_key_serialization() {
         let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
 
-        println!("{:X?}", public_key.to_formatted_bytes());
+        // println!("{:X?}", public_key.to_formatted_bytes());
     }
 
     #[test]
     fn public_key_keyid() {
         let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
+        println!("{}", public_key.keyid());
 
         assert_eq!(
             public_key.keyid(),
@@ -918,9 +922,9 @@ mod test {
                     0xc2, 0x7f, 0xb2, 0x2c, 0x1a, 0xb0,
                 ],
                 &[
-                    0x56, 0x34, 0xc3, 0xfc, 0x3c, 0xc1, 0xe9, 0x99, 0xd1, 0xd4, 0x56,
-                    0xcd, 0xac, 0x3e, 0xa9, 0xc5, 0x7b, 0x9b, 0x5a, 0x7b, 0xdd, 0xb8, 0xb5, 0x05,
-                    0xb0, 0xb8, 0xc5, 0xcd, 0xf8, 0x6a, 0xaa, 0x86,
+                    0x56, 0x34, 0xc3, 0xfc, 0x3c, 0xc1, 0xe9, 0x99, 0xd1, 0xd4, 0x56, 0xcd, 0xac,
+                    0x3e, 0xa9, 0xc5, 0x7b, 0x9b, 0x5a, 0x7b, 0xdd, 0xb8, 0xb5, 0x05, 0xb0, 0xb8,
+                    0xc5, 0xcd, 0xf8, 0x6a, 0xaa, 0x86,
                 ],
             ),
         );
@@ -941,8 +945,6 @@ mod test {
             0xcd, 0xac, 0x3e, 0xa9, 0xc5, 0x7b, 0x9b, 0x5a, 0x7b, 0xdd, 0xb8, 0xb5, 0x05, 0xb0,
             0xb8, 0xc5, 0xcd, 0xf8, 0x6a, 0xaa, 0x86,
         ];
-
-        println!("{:X?}", signature_bytes);
 
         assert_eq!(signature_bytes, sample_signature);
     }
