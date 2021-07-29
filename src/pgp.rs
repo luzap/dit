@@ -59,7 +59,7 @@ pub fn binary_to_radix64(buffer: &[u8]) -> Vec<u8> {
 }
 
 /// Return the first four bytes corresponding to a big-endian encoded time.
-fn duration_to_bytes<'a>(duration: Duration) -> Vec<u8> {
+fn duration_to_bytes(duration: Duration) -> Vec<u8> {
     duration.as_secs().to_be_bytes()[4..].to_vec()
 }
 
@@ -74,7 +74,7 @@ fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
     let mut armor = Vec::new();
 
     armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
-    armor.extend(binary_to_radix64(&buffer));
+    armor.extend(binary_to_radix64(buffer));
     armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
 
     armor
@@ -122,9 +122,6 @@ fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> 
 #[repr(u8)]
 enum ECPointCompression {
     Uncompressed = 0x04,
-    NativePointFormat = 0x40,
-    OnlyXCoord = 0x41,
-    OnlyYCoord = 0x42,
 }
 
 /// Get the number of bits contained in a multi-precision integer (MPIs) contained in
@@ -139,7 +136,6 @@ fn get_mpi_bits(mpi: &[u8]) -> u16 {
 }
 
 /// Format the length of a subpacket to comply with the standard specification.
-///
 fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     let fst_ind = buffer.partition_point(|&x| x == 0);
     let fst_byte = buffer[fst_ind];
@@ -162,6 +158,10 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
 /// first byte. This byte is concatenated with the x and y values
 /// of the EC point. This whole bitstring is then treated as the
 /// MPI and serialized.
+///
+/// # Notes
+/// Currently, we are not in full compliance with the spec. In some cases, the x
+/// and y values might have to be padded to match the underlying field size
 fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
     let length =
         get_mpi_bits(x) + get_mpi_bits(y) + get_mpi_bits(&[ECPointCompression::Uncompressed as u8]);
@@ -173,10 +173,17 @@ fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
 
 /// A structure representing a fully formed OpenPGP message.
 ///
-/// Some OpenPGP packet semantics are positionally dependant in this representation,
-/// in a manner completely opaque to the user
+/// The internals of the structure will be completely opaque to the user, and the 
+/// corresponding messages can be constructed only with the corresponding messages.
+/// This is to preserve the semantic ordering of packets.
+///
+/// # Supported packet combinations
+/// Currently, we support only standalone `Signature` packets, and Public Key packets
+/// (which have to either be followed by a `Signature` packet or a `UserID` packet 
+/// which is then followed by the `Signature` packet (thus attesting to either the
+/// owner of the key or the key itself(?))
 pub struct Message<'a> {
-    packets: Vec<Box<Packet<'a>>>,
+    packets: Vec<Packet<'a>>,
 }
 
 pub enum Packet<'a> {
@@ -415,7 +422,7 @@ impl<'a> ToPGPBytes for HSigSubpacket<'a> {
                 buffer.extend(*fingerprint)
             }
             HSigSubpacket::KeyFlags(flags) => {
-                let mut length = (2 as usize).to_be_bytes();
+                let mut length = 2_usize.to_be_bytes();
                 buffer.extend_from_slice(format_subpacket_length(&mut length));
                 buffer.push(SigSubpacketID::KeyFlags as u8);
                 buffer.push(*flags as u8);
@@ -439,7 +446,7 @@ impl<'a> ToPGPBytes for HSigSubpacket<'a> {
                 buffer.extend(algos.iter().map(|algo| *algo as u8).collect::<Vec<u8>>())
             }
             HSigSubpacket::KeyServerPreference(pref) => {
-                let mut length = (2 as usize).to_be_bytes();
+                let mut length = 2_usize.to_be_bytes();
                 buffer.extend_from_slice(format_subpacket_length(&mut length));
                 buffer.push(SigSubpacketID::KeyServerPreference as u8);
                 buffer.push(*pref as u8);
@@ -773,36 +780,32 @@ impl<'a> PKPacket<'a> {
 
 impl ToPGPBytes for PKPacket<'_> {
     fn to_formatted_bytes(&self) -> Vec<u8> {
-        let mut buffer = Vec::new();
-        match self.version {
-            Version::V4 => {
-                buffer.push(self.version as u8);
-                buffer.extend(duration_to_bytes(self.creation_time));
-
-                buffer.push(match self.public_key {
-                    PublicKey::ECDSA(_, _, _) => 0x13,
-                    PublicKey::RSA(_, _) => 0x01,
-                });
-                assert_eq!(buffer.len(), 6);
-
-                buffer.extend(self.public_key.to_raw_bytes());
-            }
-        }
-
+        let mut buffer = self.to_raw_bytes();
         let mut header = calculate_packet_header(&buffer, PacketHeader::PublicKey);
-        header.extend(buffer);
+        header.append(&mut buffer);
 
         header
     }
 
     fn to_hashable_bytes(&self) -> Vec<u8> {
-        let mut buffer = vec![0x99];
+        let mut key = self.to_raw_bytes();
 
-        vec![]
+        let mut buffer = vec![0x99];
+        buffer.extend((key.len() as u16).to_be_bytes());
+        buffer.append(&mut key);
+
+        buffer
     }
 
     fn to_raw_bytes(&self) -> Vec<u8> {
-        vec![]
+        let mut buffer = vec![self.version as u8];
+            buffer.extend(duration_to_bytes(self.creation_time));
+            buffer.push(match self.public_key {
+                PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA,
+                PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE,
+            } as u8);
+        buffer.extend(self.public_key.to_raw_bytes());
+        buffer
     }
 }
 
