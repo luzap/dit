@@ -1,2 +1,6 @@
 /target
 *.pgp
+*.gpg
+*.lock
+test/
+test/*
