@@ -1,11 +1,11 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::fs;
 use std::process::{Command, Stdio};
 
 use crate::channel;
 use crate::git;
 use crate::pgp::*;
 use crate::protocol;
+use crate::utils;
 use crate::utils::Config;
 
 use curv::arithmetic::Converter;
@@ -41,9 +41,6 @@ pub fn keygen_subcommand(
     config: Config,
     args: Option<&ArgMatches<'_>>,
 ) -> Result<(), channel::Errors> {
-    // TODO Get configs
-    // TODO Where are we storing these guys
-    // TODO How do we signal others that this is about to happen
     let keys = protocol::dkg::distributed_keygen(config);
     let public_key = match keys {
         Ok(k) => k,
@@ -53,18 +50,24 @@ pub fn keygen_subcommand(
     let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
 
     let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
-    let pub_key = PKPacket::new(PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y), None);
-    let user_packet = UserID {
-        user: git::get_user_name(),
-        email: git::get_user_email(),
-    };
+
+    let git_user = git::get_user_name();
+    let git_email = git::get_user_email();
+    let signing_time = utils::get_current_epoch();
+
+    let mut message = Message::new();
+    let public_key = message.new_public_key(
+        PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y),
+        git_user,
+        git_email,
+        signing_time,
+    );
+
 
     /* let user_id = pub_key.keyid();
     let signature =
         SignaturePacket::new(SigType::UserIDPKCert, &user_id, Some(pub_key.creation_time));
-    
     let msg = message.get_signing_portion();
-    
     // protocol::signing::distributed_sign()
 
 

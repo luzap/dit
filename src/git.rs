@@ -11,7 +11,7 @@ fn parse_cmd_output(piped_output: &[u8]) -> String {
         Err(_) => unreachable!(),
     };
 
-    if output.ends_with("\n") {
+    if output.ends_with('\n') {
         output.pop();
     }
     output

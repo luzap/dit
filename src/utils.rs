@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 // TODO Implement conversion to string
@@ -25,4 +25,14 @@ pub struct Tag {
 pub enum Operation {
     KeyGen,
     Signing
+}
+
+/// Get seconds since the Unix epoch
+///
+/// The failure condition for `SystemTime` returns a newtype wrapping `Duration`
+/// to indicate why the time differencing did not work. Not sure what can be done 
+/// if the system clock is done without calls to external time servers, so panicking
+/// on a broken system clock seems reasonable
+pub fn get_current_epoch() -> Duration {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap()
 }

@@ -63,13 +63,13 @@ pub fn find_global_config(filename: Option<OsString>) -> Option<utils::Config> {
         return None
     }
    
-    let config_file = find_file_in_path(&config_dir.as_path(), config_file);
+    let config_file = find_file_in_path(config_dir.as_path(), config_file);
     
     if config_file.components().next().is_none() {
         return None
     }
 
-    parse_config(&config_file.as_path())
+    parse_config(config_file.as_path())
 }
 
 // TODO Add several commands to check the server

@@ -5,6 +5,8 @@
 use sha1::{Digest, Sha1};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
+use crate::utils;
+
 
 const BIN_TO_ASCII: [u8; 64] = [
     65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
@@ -12,7 +14,7 @@ const BIN_TO_ASCII: [u8; 64] = [
     115, 116, 117, 118, 119, 120, 121, 122, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 43, 47,
 ];
 
-/// Convert a byte buffer from a binaru representation to radix64.
+/// Convert a byte buffer from a binary representation to radix64.
 ///
 /// It should be noted that the radix64 representation mentioned in the standard
 /// is equivalent to base64, but integrating yet another crate for the purpose
@@ -70,7 +72,7 @@ fn duration_to_bytes(duration: Duration) -> Vec<u8> {
 /// The newline has to be part of the signature
 /// We add another newline to leave a blank space between the armor header
 /// and the armored PGP, as that line is used for additional properties
-fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
+pub fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
     let mut armor = Vec::new();
 
     armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
@@ -103,7 +105,6 @@ fn calculate_packet_header(buffer: &[u8], packet_type: PacketHeader) -> Vec<u8> 
     let mut header: u8 = 0b1000_0000;
     header |= (packet_type as u8) << PACKET_TAG_OFFSET;
 
-    // TODO Move this to a separate function
     let leading_zeroes = buffer.len().to_be_bytes().partition_point(|&x| x == 0);
     let size_bytes = &buffer.len().to_be_bytes()[leading_zeroes..];
 
@@ -151,6 +152,7 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
+
 /// Fill a buffer with an elliptic curve point formatted as an MPI.
 ///
 /// The MPI encoding of EC points is a little different. The point
@@ -173,20 +175,93 @@ fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
 
 /// A structure representing a fully formed OpenPGP message.
 ///
-/// The internals of the structure will be completely opaque to the user, and the 
+/// The internals of the structure will be completely opaque to the user, and the
 /// corresponding messages can be constructed only with the corresponding messages.
 /// This is to preserve the semantic ordering of packets.
 ///
 /// # Supported packet combinations
 /// Currently, we support only standalone `Signature` packets, and Public Key packets
-/// (which have to either be followed by a `Signature` packet or a `UserID` packet 
+/// (which have to either be followed by a `Signature` packet or a `UserID` packet
 /// which is then followed by the `Signature` packet (thus attesting to either the
 /// owner of the key or the key itself(?))
 pub struct Message<'a> {
     packets: Vec<Packet<'a>>,
 }
 
-pub enum Packet<'a> {
+impl<'a> Message<'a> {
+    pub fn new() -> Message<'a> {
+        Message {
+            packets: Vec::with_capacity(3)
+        }
+    }
+
+    pub fn new_signature(&mut self, time: Duration) {
+        self.packets.push(
+            Packet::PartialSignature(
+            PartialSignature::new(SigType::Binary, PublicKeyAlgorithm::ECDSA,
+                Some(time))
+        ));
+
+    }
+    pub fn finalize_signature(&mut self, hash: [u8; 2], sig: SignatureData<'a>) {
+        // We always have the (partial) signature as the last item
+        if let Some(Packet::PartialSignature ( partial ) ) = self.packets.pop() {
+            self.packets.push(Packet::Signature(
+                Signature::new(partial, hash, sig)
+            ));
+        } else {
+            println!("The packet does not have a signature!");
+        }
+    }
+
+    pub fn new_public_key(
+        &mut self,
+        pubkey: PublicKey<'a>,
+        user: String,
+        email: String,
+        time: Duration,
+    ) {
+        
+
+        self.packets
+            .push(Packet::PublicKey(PKPacket::new(pubkey, Some(time))));
+        self.packets.push(Packet::UserID(UserID { user, email }));
+        let mut partial = PartialSignature::new(
+            SigType::UserIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
+        partial.subpackets.extend([HSigSubpacket::CreationTime(time),
+
+            /* HSigSubpacket::Fingerprint()
+            KeyFlags(KeyFlags),
+            PreferredSymmetricAlgos(Vec<SymmetricAlgos>),
+            PreferredHashAlgos(Vec<HashAlgo>),
+            PreferredCompressionAlgos(Vec<CompressionAlgos>),
+            KeyServerPreference(u8), */
+
+            ]);
+
+
+        self.packets.push(Packet::PartialSignature(partial));
+        
+
+
+
+    }
+
+    pub fn get_hashable(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        for packet in self.packets.iter() {
+            match packet { 
+                Packet::PublicKey(pubkey) => buffer.extend(pubkey.to_hashable_bytes()),
+                Packet::Signature(sig) => buffer.extend(sig.to_hashable_bytes()),
+                Packet::PartialSignature(partial) => buffer.extend(partial.to_hashable_bytes()),
+                Packet::UserID(userid) => buffer.extend(userid.to_hashable_bytes())
+            }
+        };
+        buffer
+    }
+}
+
+enum Packet<'a> {
     PublicKey(PKPacket<'a>),
     Signature(Signature<'a>),
     PartialSignature(PartialSignature<'a>),
@@ -201,14 +276,14 @@ enum Version {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum SigType {
+enum SigType {
     Binary = 0x00,
     UserIDPKCert = 0x10,
 }
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum PublicKeyAlgorithm {
+enum PublicKeyAlgorithm {
     RSASE = 0x01,
     ECDSA = 0x13,
 }
@@ -249,7 +324,7 @@ impl<'a> ToPGPBytes for SignatureData<'a> {
 /// instance, a Public Key packet can be interpreted differently when being written
 /// to file versus when it needs to be signed. This is not only true for packets,
 /// but for some subpackets as well.
-pub trait ToPGPBytes {
+trait ToPGPBytes {
     /// Get OpenPGP-formatted content without packet headers
     fn to_raw_bytes(&self) -> Vec<u8>;
     /// Get OpenPGP-formatted content with fully-formed packet headers
@@ -271,7 +346,7 @@ pub trait ToPGPBytes {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum HashAlgo {
+enum HashAlgo {
     MD5 = 1,
     SHA1 = 2,
     RIPEMD160 = 3,
@@ -285,7 +360,7 @@ pub enum HashAlgo {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum SymmetricAlgos {
+enum SymmetricAlgos {
     Plaintext = 0x00,
     IDEA = 0x01,
     TripleDES = 0x02,
@@ -296,7 +371,7 @@ pub enum SymmetricAlgos {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum CompressionAlgos {
+enum CompressionAlgos {
     Uncompressed = 0x00,
     ZIP = 0x01,
     ZLIB = 0x02,
@@ -305,7 +380,7 @@ pub enum CompressionAlgos {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum KeyFlags {
+enum KeyFlags {
     CanCertifyKeys = 0x01,
     CanSign = 0x02,
     CanEncrypt = 0x04,
@@ -357,7 +432,7 @@ impl Index<CurveOID> for CurveRepr {
     }
 }
 
-pub enum HSigSubpacket<'a> {
+enum HSigSubpacket<'a> {
     CreationTime(Duration),
     Fingerprint(&'a [u8]),
     KeyFlags(KeyFlags),
@@ -367,12 +442,12 @@ pub enum HSigSubpacket<'a> {
     KeyServerPreference(u8),
 }
 
-pub enum SigSubpacket<'a> {
+enum SigSubpacket<'a> {
     KeyID(&'a [u8]),
 }
 
 #[repr(u8)]
-pub enum SigSubpacketID {
+enum SigSubpacketID {
     CreationTime = 0x02,
     PreferredSymmetricAlgos = 0x0b,
     KeyID = 0x10,
@@ -537,7 +612,7 @@ impl<'a> ToPGPBytes for PublicKey<'a> {
 /// as the data it holds has been signed. However, in our model, the data that needs
 /// to be signed does not exist until we construct the signature, for which we need
 /// the signed data, meaning separating the two structures is preferred.
-pub struct PartialSignature<'a> {
+struct PartialSignature<'a> {
     version: Version,
     sigtype: SigType,
     pubkey_algo: PublicKeyAlgorithm,
@@ -546,7 +621,7 @@ pub struct PartialSignature<'a> {
 }
 
 impl<'a> PartialSignature<'a> {
-    pub fn new(
+    fn new(
         sigtype: SigType,
         pubkey_algo: PublicKeyAlgorithm,
         time: Option<Duration>,
@@ -554,10 +629,7 @@ impl<'a> PartialSignature<'a> {
         // TODO Move to a separate function
         let epoch = match time {
             Some(n) => n,
-            None => match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                Ok(n) => n,
-                Err(e) => panic!("Error: {}", e),
-            },
+            None => utils::get_current_epoch()
         };
 
         let mut partial_signature = PartialSignature {
@@ -735,36 +807,9 @@ impl<'a> PKPacket<'a> {
         }
     }
 
-    fn get_hashed_subsection(&self) -> Vec<u8> {
-        let mut buffer = vec![
-            match self.version {
-                Version::V4 => 0x99,
-            },
-            0x00,
-            0x00,
-            self.version as u8,
-        ];
-        buffer.extend(duration_to_bytes(self.creation_time));
-        buffer.push(match self.public_key {
-            PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA as u8,
-            PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE as u8,
-        });
-        buffer.extend(self.public_key.to_raw_bytes());
-        // TODO Is there any better way of doing this?
-        let total_len = ((buffer.len() - 3) as u16).to_be_bytes();
-        buffer[1] = total_len[0];
-        buffer[2] = total_len[1];
-
-        let mut hasher = Sha1::new();
-        hasher.update(buffer);
-        let result = hasher.finalize();
-
-        result.to_vec()
-    }
-
     // The Key ID is unambiguously the lowest 64 bits of the key hash
     pub fn keyid(&self) -> String {
-        let hash = self.get_hashed_subsection();
+        let hash = sha1_hash(&self.to_hashable_bytes());
         let len = hash.len();
         hash[len - 8..]
             .iter()
@@ -774,8 +819,15 @@ impl<'a> PKPacket<'a> {
     }
 
     pub fn fingerprint(&self) -> Vec<u8> {
-        self.get_hashed_subsection()
+        sha1_hash(&self.to_hashable_bytes())
     }
+
+}
+
+fn sha1_hash(buffer: &[u8]) -> Vec<u8> {
+        let mut hasher = Sha1::new();
+        hasher.update(buffer);
+        hasher.finalize().to_vec()
 }
 
 impl ToPGPBytes for PKPacket<'_> {
@@ -789,21 +841,19 @@ impl ToPGPBytes for PKPacket<'_> {
 
     fn to_hashable_bytes(&self) -> Vec<u8> {
         let mut key = self.to_raw_bytes();
-
         let mut buffer = vec![0x99];
         buffer.extend((key.len() as u16).to_be_bytes());
         buffer.append(&mut key);
-
         buffer
     }
 
     fn to_raw_bytes(&self) -> Vec<u8> {
         let mut buffer = vec![self.version as u8];
-            buffer.extend(duration_to_bytes(self.creation_time));
-            buffer.push(match self.public_key {
-                PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA,
-                PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE,
-            } as u8);
+        buffer.extend(duration_to_bytes(self.creation_time));
+        buffer.push(match self.public_key {
+            PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA,
+            PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE,
+        } as u8);
         buffer.extend(self.public_key.to_raw_bytes());
         buffer
     }
