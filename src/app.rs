@@ -1,5 +1,6 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::process::{Command, Stdio};
+use std::fs;
 
 use crate::channel;
 use crate::git;
@@ -55,23 +56,18 @@ pub fn keygen_subcommand(
     let git_email = git::get_user_email();
     let signing_time = utils::get_current_epoch();
 
-    let mut message = Message::new();
-    let public_key = message.new_public_key(
+    let mut message = Message::new().new_public_key(
         PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y),
         git_user,
         git_email,
         signing_time,
     );
 
+    let signable = message.get_hashable();
+    let signed = protocol::signing::distributed_sign(&signable, config, public_key);
+    
 
-    /* let user_id = pub_key.keyid();
-    let signature =
-        SignaturePacket::new(SigType::UserIDPKCert, &user_id, Some(pub_key.creation_time));
-    let msg = message.get_signing_portion();
-    // protocol::signing::distributed_sign()
-
-
-    fs::write(key_file, message).expect("File already exists"); */
+    // fs::write(key_file, message).expect("File already exists"); 
 
     Ok(())
 }
@@ -90,7 +86,7 @@ pub fn tag_subcommand(config: Config, args: Option<ArgMatches>) -> Result<(), ch
     Ok(())
 }
 
-// TODO Move out of here
+// TODO Clean this up a little 
 pub fn git_subcommand(subcommand: &str, args: Option<&ArgMatches>) {
     let mut git_child = Command::new(GIT);
     let mut git_owning = git_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());

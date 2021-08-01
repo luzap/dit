@@ -2,11 +2,10 @@
 // 1. Create a `Writer` struct that would take care of keeping track of the current
 // writes. This should wrap a vector with some given capacity
 
+use crate::utils;
 use sha1::{Digest, Sha1};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
-use crate::utils;
-
 
 const BIN_TO_ASCII: [u8; 64] = [
     65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88,
@@ -152,7 +151,6 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
     }
 }
 
-
 /// Fill a buffer with an elliptic curve point formatted as an MPI.
 ///
 /// The MPI encoding of EC points is a little different. The point
@@ -191,27 +189,31 @@ pub struct Message<'a> {
 impl<'a> Message<'a> {
     pub fn new() -> Message<'a> {
         Message {
-            packets: Vec::with_capacity(3)
+            packets: Vec::with_capacity(3),
         }
     }
 
     pub fn new_signature(&mut self, time: Duration) {
-        self.packets.push(
-            Packet::PartialSignature(
-            PartialSignature::new(SigType::Binary, PublicKeyAlgorithm::ECDSA,
-                Some(time))
-        ));
-
+        self.packets
+            .push(Packet::PartialSignature(PartialSignature::new(
+                SigType::Binary,
+                PublicKeyAlgorithm::ECDSA,
+                Some(time),
+            )));
     }
-    pub fn finalize_signature(&mut self, hash: [u8; 2], sig: SignatureData<'a>) {
-        // We always have the (partial) signature as the last item
-        if let Some(Packet::PartialSignature ( partial ) ) = self.packets.pop() {
-            self.packets.push(Packet::Signature(
-                Signature::new(partial, hash, sig)
-            ));
+    pub fn finalize_signature(&mut self, hash: [u8; 2], sig: SignatureData<'a>) -> &Message {
+
+        // We always have the (partial) signature as the last item, and absent
+        // the GnuPG way of specifying the grammar of a message (via S-expressions),
+        // this is probably a safe way of going about finalizing the signature
+        if let Some(Packet::PartialSignature(partial)) = self.packets.pop() {
+            self.packets
+                .push(Packet::Signature(Signature::new(partial, hash, sig)));
         } else {
             println!("The packet does not have a signature!");
         }
+
+        self
     }
 
     pub fn new_public_key(
@@ -220,43 +222,51 @@ impl<'a> Message<'a> {
         user: String,
         email: String,
         time: Duration,
-    ) {
-        
+    ) -> &Message {
+        let public_key_packet = PKPacket::new(pubkey, Some(time));
+        let keyid = public_key_packet.keyid();
+        let fingerprint = public_key_packet.fingerprint();
 
-        self.packets
-            .push(Packet::PublicKey(PKPacket::new(pubkey, Some(time))));
+        self.packets.push(Packet::PublicKey(public_key_packet));
         self.packets.push(Packet::UserID(UserID { user, email }));
-        let mut partial = PartialSignature::new(
-            SigType::UserIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
-        partial.subpackets.extend([HSigSubpacket::CreationTime(time),
-
-            /* HSigSubpacket::Fingerprint()
-            KeyFlags(KeyFlags),
-            PreferredSymmetricAlgos(Vec<SymmetricAlgos>),
-            PreferredHashAlgos(Vec<HashAlgo>),
-            PreferredCompressionAlgos(Vec<CompressionAlgos>),
-            KeyServerPreference(u8), */
-
-            ]);
-
+        let mut partial =
+            PartialSignature::new(SigType::UserIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
+        // Both the subpackets and their order have been derived from a GnuPG created key
+        // in order to conform as much as possible with any undocumented implementation
+        // assumptions that we may or may not run into
+        partial.subpackets.extend([
+            HSigSubpacket::CreationTime(time),
+            HSigSubpacket::Fingerprint(fingerprint),
+            HSigSubpacket::KeyFlags(KeyFlags::CanSign),
+            HSigSubpacket::PreferredSymmetricAlgos(vec![
+                SymmetricAlgos::AES256, SymmetricAlgos::AES192, SymmetricAlgos::AES128,
+                SymmetricAlgos::TripleDES
+            ]),
+            HSigSubpacket::PreferredHashAlgos(vec![
+                HashAlgo::SHA2_512, HashAlgo::SHA2_384, HashAlgo::SHA2_256,
+                HashAlgo::SHA2_224
+            ]),
+            HSigSubpacket::PreferredCompressionAlgos(vec![
+                CompressionAlgos::ZLIB, CompressionAlgos::BZip2, CompressionAlgos::ZIP
+            ]),
+            HSigSubpacket::KeyServerPreference(0x80)
+        ]);
 
         self.packets.push(Packet::PartialSignature(partial));
-        
-
-
-
+    
+        self
     }
 
     pub fn get_hashable(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         for packet in self.packets.iter() {
-            match packet { 
+            match packet {
                 Packet::PublicKey(pubkey) => buffer.extend(pubkey.to_hashable_bytes()),
                 Packet::Signature(sig) => buffer.extend(sig.to_hashable_bytes()),
                 Packet::PartialSignature(partial) => buffer.extend(partial.to_hashable_bytes()),
-                Packet::UserID(userid) => buffer.extend(userid.to_hashable_bytes())
+                Packet::UserID(userid) => buffer.extend(userid.to_hashable_bytes()),
             }
-        };
+        }
         buffer
     }
 }
@@ -432,9 +442,9 @@ impl Index<CurveOID> for CurveRepr {
     }
 }
 
-enum HSigSubpacket<'a> {
+enum HSigSubpacket {
     CreationTime(Duration),
-    Fingerprint(&'a [u8]),
+    Fingerprint(Vec<u8>),
     KeyFlags(KeyFlags),
     PreferredSymmetricAlgos(Vec<SymmetricAlgos>),
     PreferredHashAlgos(Vec<HashAlgo>),
@@ -442,8 +452,8 @@ enum HSigSubpacket<'a> {
     KeyServerPreference(u8),
 }
 
-enum SigSubpacket<'a> {
-    KeyID(&'a [u8]),
+enum SigSubpacket {
+    KeyID(Vec<u8>),
 }
 
 #[repr(u8)]
@@ -458,7 +468,7 @@ enum SigSubpacketID {
     IssuerFingerprint = 0x21,
 }
 
-impl<'a> ToPGPBytes for HSigSubpacket<'a> {
+impl ToPGPBytes for HSigSubpacket {
     fn to_raw_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         match self {
@@ -629,7 +639,7 @@ impl<'a> PartialSignature<'a> {
         // TODO Move to a separate function
         let epoch = match time {
             Some(n) => n,
-            None => utils::get_current_epoch()
+            None => utils::get_current_epoch(),
         };
 
         let mut partial_signature = PartialSignature {
@@ -821,13 +831,12 @@ impl<'a> PKPacket<'a> {
     pub fn fingerprint(&self) -> Vec<u8> {
         sha1_hash(&self.to_hashable_bytes())
     }
-
 }
 
 fn sha1_hash(buffer: &[u8]) -> Vec<u8> {
-        let mut hasher = Sha1::new();
-        hasher.update(buffer);
-        hasher.finalize().to_vec()
+    let mut hasher = Sha1::new();
+    hasher.update(buffer);
+    hasher.finalize().to_vec()
 }
 
 impl ToPGPBytes for PKPacket<'_> {
