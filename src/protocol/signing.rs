@@ -21,7 +21,7 @@ use super::utils::Config;
 
 pub fn distributed_sign(
     hash: &[u8],
-    config: Config,
+    config: &Config,
     keypair: PartyKeyPair,
 ) -> Result<SignatureRecid, Errors> {
     let params = Parameters {

@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 // TODO Implement conversion to string
 // TODO Start using the project data in the server
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Server {
     pub address: String,
     pub port: u16,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub project: String,
     pub server: Server,
@@ -36,3 +36,4 @@ pub enum Operation {
 pub fn get_current_epoch() -> Duration {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap()
 }
+

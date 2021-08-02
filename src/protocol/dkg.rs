@@ -18,7 +18,7 @@ use curv::elliptic::curves::secp256_k1::{FE, GE};
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen(config: Config) -> Result<PartyKeyPair, Errors> {
+pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
     let params = Parameters {
         threshold: 2,
         share_count: 4,

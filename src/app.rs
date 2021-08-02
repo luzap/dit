@@ -1,6 +1,6 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::process::{Command, Stdio};
 use std::fs;
+use std::process::{Command, Stdio};
 
 use crate::channel;
 use crate::git;
@@ -12,12 +12,9 @@ use crate::utils::Config;
 use curv::arithmetic::Converter;
 use curv::elliptic::curves::traits::*;
 
-// TODO Make this part of the config
-// TODO How do we output the correct help messages? Need to have the output
-// saved somehow, but not sure how that would work, all things considered.
-// Might want to use something like lazy_static!{}
 const GIT: &str = "git";
 
+// TODO Document what the commands do
 pub fn build_app() -> App<'static, 'static> {
     let app = App::new("dit")
         .version(crate_version!())
@@ -33,7 +30,8 @@ pub fn build_app() -> App<'static, 'static> {
             App::new("start-tag")
                 .help("Start distributed tagging")
                 .arg(Arg::with_name("message").short("m").number_of_values(1))
-                .arg(Arg::with_name("tag name").required(true)),
+                .arg(Arg::with_name("tag name").required(true))
+                .arg(Arg::with_name("commit")),
         );
     app
 }
@@ -42,11 +40,12 @@ pub fn keygen_subcommand(
     config: Config,
     args: Option<&ArgMatches<'_>>,
 ) -> Result<(), channel::Errors> {
-    let keys = protocol::dkg::distributed_keygen(config);
+    let keys = protocol::dkg::distributed_keygen(&config);
     let public_key = match keys {
         Ok(k) => k,
         Err(_) => unreachable!(),
     };
+    // TODO Are we gonna do more checking here?
     let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
     let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
 
@@ -56,18 +55,29 @@ pub fn keygen_subcommand(
     let git_email = git::get_user_email();
     let signing_time = utils::get_current_epoch();
 
-    let mut message = Message::new().new_public_key(
+    let mut message = Message::new();
+    message.new_public_key(
         PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y),
         git_user,
         git_email,
         signing_time,
+
     );
 
-    let signable = message.get_hashable();
-    let signed = protocol::signing::distributed_sign(&signable, config, public_key);
-    
+    let hashable = message.get_hashable();
+    let hashed = sha512_hash(&hashable);
 
-    // fs::write(key_file, message).expect("File already exists"); 
+    let signed = protocol::signing::distributed_sign(&hashed, &config, public_key);
+    if let Ok(signature) = signed {
+        let sig_data = encode_sig_data(signature);
+        let hash = &hashed[hashed.len() - 2..];
+        message.finalize_signature(hash, sig_data);
+        let signature = message.get_formatted_message();
+
+        fs::write(key_file, signature).expect("File already exists");
+    } else {
+        println!("Something went wrong during signing");
+    }
 
     Ok(())
 }
@@ -75,10 +85,10 @@ pub fn keygen_subcommand(
 pub fn tag_subcommand(config: Config, args: Option<ArgMatches>) -> Result<(), channel::Errors> {
     if let Some(args) = args {
         if args.is_present("sign") {
-            let hash = git::get_commit_hash("HEAD");
-            println!("Signing the following commit: {}", hash);
+            let commit = args.value_of("commit").unwrap_or("HEAD");
+            let hash = git::get_commit_hash(commit);
+            println!("Signing the commit {}", hash);
             // TODO Get key pair
-
             // protocol::signing::distributed_sign(hash,
         }
     }
@@ -86,7 +96,7 @@ pub fn tag_subcommand(config: Config, args: Option<ArgMatches>) -> Result<(), ch
     Ok(())
 }
 
-// TODO Clean this up a little 
+// TODO Clean this up a little
 pub fn git_subcommand(subcommand: &str, args: Option<&ArgMatches>) {
     let mut git_child = Command::new(GIT);
     let mut git_owning = git_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());
