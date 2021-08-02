@@ -61,13 +61,12 @@ pub fn keygen_subcommand(
         git_user,
         git_email,
         signing_time,
-
     );
 
     let hashable = message.get_hashable();
     let hashed = sha512_hash(&hashable);
 
-    let signed = protocol::signing::distributed_sign(&hashed, &config, public_key);
+    let signed = protocol::signing::distributed_sign(&hashable, &config, public_key);
     if let Ok(signature) = signed {
         let sig_data = encode_sig_data(signature);
         let hash = &hashed[hashed.len() - 2..];

@@ -265,12 +265,11 @@ impl<'a> Message<'a> {
         self.packets.push(Packet::PublicKey(public_key_packet));
         self.packets.push(Packet::UserID(UserID { user, email }));
         let mut partial =
-            PartialSignature::new(SigType::UserIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
+            PartialSignature::new(SigType::PositiveIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
         // Both the subpackets and their order have been derived from a GnuPG created key
         // in order to conform as much as possible with any undocumented implementation
         // assumptions that we may or may not run into
         partial.subpackets.extend([
-            HSigSubpacket::CreationTime(time),
             HSigSubpacket::Fingerprint(fingerprint),
             HSigSubpacket::KeyFlags(KeyFlags::CanSign),
             HSigSubpacket::PreferredSymmetricAlgos(vec![
@@ -302,9 +301,9 @@ impl<'a> Message<'a> {
         for packet in self.packets.iter() {
             match packet {
                 Packet::PublicKey(pubkey) => buffer.extend(pubkey.to_hashable_bytes()),
-                Packet::Signature(sig) => buffer.extend(sig.to_hashable_bytes()),
                 Packet::PartialSignature(partial) => buffer.extend(partial.to_hashable_bytes()),
                 Packet::UserID(userid) => buffer.extend(userid.to_hashable_bytes()),
+                Packet::Signature(_) => unreachable!()
             }
         }
         buffer
@@ -341,7 +340,7 @@ enum Version {
 #[derive(Copy, Clone)]
 enum SigType {
     Binary = 0x00,
-    UserIDPKCert = 0x10,
+    PositiveIDPKCert = 0x13
 }
 
 #[repr(u8)]
@@ -715,7 +714,7 @@ impl<'a> ToPGPBytes for PartialSignature {
             .map(|subpkt| subpkt.to_formatted_bytes())
             .flatten()
             .collect::<Vec<u8>>();
-        buffer.extend(&hashable_subpackets.len().to_be_bytes()[6..]);
+        buffer.extend((hashable_subpackets.len() as u16).to_be_bytes());
         buffer.append(&mut hashable_subpackets);
         buffer
     }
@@ -817,6 +816,7 @@ impl ToPGPBytes for UserID {
         header.extend(body);
         header
     }
+
     /// A certification signature (type 0x10 through 0x13) hashes the User ID being
     /// bound to the key into the hash context after the above data. A V4 or V5
     /// certification hashes the constant 0xB4 for User ID certifications or the
@@ -824,10 +824,11 @@ impl ToPGPBytes for UserID {
     /// number giving the length of the User ID or User Attribute data, and then the
     /// User ID or User Attribute data.
     fn to_hashable_bytes(&self) -> Vec<u8> {
+        let mut buffer = vec![0xb4];
         let mut body = self.to_raw_bytes();
-        let mut header = (body.len() as u32).to_be_bytes().to_vec();
-        header.append(&mut body);
-        header
+        buffer.extend((body.len() as u32).to_be_bytes());
+        buffer.append(&mut body);
+        buffer
     }
 }
 

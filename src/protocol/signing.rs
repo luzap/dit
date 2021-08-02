@@ -258,7 +258,7 @@ pub fn distributed_sign(
         }
     }
 
-    let message_bn = HSha256::create_hash(&[&BigInt::from_bytes(message)]);
+    let message = HSha256::create_hash(&[&BigInt::from_bytes(message)]);
     let input_stage6 = SignStage6Input {
         R_dash_vec,
         R: res_stage5.R,
@@ -273,8 +273,9 @@ pub fn distributed_sign(
         sigma: res_stage4.sigma_i,
         ysum: keypair.y_sum_s,
         sign_key: res_stage1.sign_keys,
-        message_bn: message_bn.clone(),
+        message_bn: message.clone(),
     };
+
     let res_stage6 = sign_stage6(&input_stage6).expect("stage6 sign failed.");
     assert!(channel
         .broadcast(
@@ -300,12 +301,13 @@ pub fn distributed_sign(
         local_sig_vec: local_sig_vec,
         ysum: keypair.y_sum_s.clone(),
     };
+
     let res_stage7 = sign_stage7(&input_stage7).expect("sign stage 7 failed");
 
     check_sig(
         &res_stage7.local_sig.r,
         &res_stage7.local_sig.s,
-        &message_bn,
+        &message,
         &keypair.y_sum_s,
     );
     Ok(res_stage7.local_sig)
