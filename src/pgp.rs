@@ -1,6 +1,7 @@
 use crate::utils;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::SignatureRecid;
 use std::ops::Index;
+use std::cmp;
 use std::time::{Duration, SystemTime};
 
 // TODO What does the Recid mean?
@@ -23,7 +24,7 @@ pub fn sha512_hash(buffer: &[u8]) -> Vec<u8> {
     use curv::cryptographic_primitives::hashing::hash_sha512::HSha512;
     use curv::cryptographic_primitives::hashing::traits::Hash;
 
-    let mut hasher = HSha512::create_hash_from_slice(buffer);
+    let hasher = HSha512::create_hash_from_slice(buffer);
     hasher.to_bytes()
 }
 
@@ -179,12 +180,13 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
 /// of the EC point. This whole bitstring is then treated as the
 /// MPI and serialized.
 ///
-/// # Notes
-/// Currently, we are not in full compliance with the spec. In some cases, the x
-/// and y values might have to be padded to match the underlying field size
-fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
-    let length =
-        get_mpi_bits(x) + get_mpi_bits(y) + get_mpi_bits(&[ECPointCompression::Uncompressed as u8]);
+/// The standard specifies the use of zero-padding when serializing,
+/// but we have never run into the case where this causes an issue
+fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8], field_size: u16) {
+    let length = std::cmp::max(get_mpi_bits(x), field_size)
+                + std::cmp::max(get_mpi_bits(y), field_size)
+                + get_mpi_bits(&[ECPointCompression::Uncompressed as u8]);
+
     buffer.extend_from_slice(&length.to_be_bytes());
     buffer.push(ECPointCompression::Uncompressed as u8);
     buffer.extend_from_slice(x);
@@ -264,8 +266,11 @@ impl<'a> Message<'a> {
 
         self.packets.push(Packet::PublicKey(public_key_packet));
         self.packets.push(Packet::UserID(UserID { user, email }));
-        let mut partial =
-            PartialSignature::new(SigType::PositiveIDPKCert, PublicKeyAlgorithm::ECDSA, Some(time));
+        let mut partial = PartialSignature::new(
+            SigType::PositiveIDPKCert,
+            PublicKeyAlgorithm::ECDSA,
+            Some(time),
+        );
         // Both the subpackets and their order have been derived from a GnuPG created key
         // in order to conform as much as possible with any undocumented implementation
         // assumptions that we may or may not run into
@@ -303,7 +308,7 @@ impl<'a> Message<'a> {
                 Packet::PublicKey(pubkey) => buffer.extend(pubkey.to_hashable_bytes()),
                 Packet::PartialSignature(partial) => buffer.extend(partial.to_hashable_bytes()),
                 Packet::UserID(userid) => buffer.extend(userid.to_hashable_bytes()),
-                Packet::Signature(_) => unreachable!()
+                Packet::Signature(_) => unreachable!(),
             }
         }
         buffer
@@ -340,13 +345,12 @@ enum Version {
 #[derive(Copy, Clone)]
 enum SigType {
     Binary = 0x00,
-    PositiveIDPKCert = 0x13
+    PositiveIDPKCert = 0x13,
 }
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum PublicKeyAlgorithm {
-    RSASE = 0x01,
     ECDSA = 0x13,
 }
 
@@ -623,7 +627,6 @@ impl ToPGPBytes for SigSubpacket {
 
 pub enum PublicKey<'a> {
     ECDSA(CurveOID, &'a [u8], &'a [u8]),
-    RSA(&'a [u8], &'a [u8]),
 }
 
 impl<'a> ToPGPBytes for PublicKey<'a> {
@@ -634,16 +637,7 @@ impl<'a> ToPGPBytes for PublicKey<'a> {
                 buffer.push(CURVE_REPR[*oid].len() as u8);
                 buffer.extend(CURVE_REPR[*oid]);
 
-                format_ec_point(&mut buffer, key_x, key_y);
-            }
-            PublicKey::RSA(n, e) => {
-                let n_bits = get_mpi_bits(n);
-                buffer.extend(n_bits.to_be_bytes());
-                buffer.extend(*n);
-
-                let e_bits = get_mpi_bits(e);
-                buffer.extend(e_bits.to_be_bytes());
-                buffer.extend(*e);
+                format_ec_point(&mut buffer, key_x, key_y, 256);
             }
         }
         buffer
@@ -835,7 +829,6 @@ impl ToPGPBytes for UserID {
 pub struct PKPacket<'a> {
     version: Version,
     pub creation_time: Duration,
-    days_until_expiration: u16,
     public_key: PublicKey<'a>,
 }
 
@@ -852,25 +845,29 @@ impl<'a> PKPacket<'a> {
         PKPacket {
             version: Version::V4,
             creation_time: epoch,
-            days_until_expiration: 0,
             public_key,
         }
     }
 
-    // The Key ID is unambiguously the lowest 64 bits of the key hash
+    // The version 4 Key ID is unambiguously the lowest 64 bits of the key hash
     pub fn keyid(&self) -> Vec<u8> {
-        let hash = sha160_hash(&self.to_hashable_bytes());
+        let mut key = self.to_raw_bytes();
+        let mut buffer = vec![0x99];
+        buffer.extend((key.len() as u16).to_be_bytes());
+        buffer.append(&mut key);
+
+        let hash = sha160_hash(&buffer);
         let len = hash.len();
         hash[len - 8..].to_vec()
-
-        /* .iter()
-        .map(|hex| format!("{:02X}", hex))
-        .collect::<Vec<String>>()
-        .join("") */
     }
 
     pub fn fingerprint(&self) -> Vec<u8> {
-        sha160_hash(&self.to_hashable_bytes())
+        let mut key = self.to_raw_bytes();
+        let mut buffer = vec![0x99];
+        buffer.extend((key.len() as u16).to_be_bytes());
+        buffer.append(&mut key);
+
+        sha160_hash(&buffer)
     }
 }
 
@@ -884,10 +881,12 @@ impl ToPGPBytes for PKPacket<'_> {
     }
 
     fn to_hashable_bytes(&self) -> Vec<u8> {
-        let mut key = self.to_raw_bytes();
         let mut buffer = vec![0x99];
-        buffer.extend((key.len() as u16).to_be_bytes());
-        buffer.append(&mut key);
+        let body = self.to_raw_bytes();
+        let header = calculate_packet_header(&body, PacketHeader::PublicKey);
+        assert_eq!(header.len(), 2);
+        buffer.extend(header);
+        buffer.extend(body);
         buffer
     }
 
@@ -896,7 +895,6 @@ impl ToPGPBytes for PKPacket<'_> {
         buffer.extend(duration_to_bytes(self.creation_time));
         buffer.push(match self.public_key {
             PublicKey::ECDSA(_, _, _) => PublicKeyAlgorithm::ECDSA,
-            PublicKey::RSA(_, _) => PublicKeyAlgorithm::RSASE,
         } as u8);
         buffer.extend(self.public_key.to_raw_bytes());
         buffer
@@ -906,40 +904,6 @@ impl ToPGPBytes for PKPacket<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    const RSA_PUBLIC_KEY: PublicKey = PublicKey::RSA(
-        &[
-            0xd9, 0x02, 0x41, 0x2a, 0xbf, 0xd6, 0x13, 0xf9, 0xed, 0x8a, 0xf0, 0xe1, 0x9e, 0x02,
-            0x91, 0xd6, 0xee, 0x31, 0x7d, 0x82, 0xd3, 0x4f, 0x2e, 0xcd, 0x63, 0xa6, 0x5f, 0xeb,
-            0xb3, 0x96, 0xb9, 0x45, 0x7b, 0x17, 0x01, 0x1c, 0x02, 0x8a, 0x55, 0xb6, 0x6e, 0xc4,
-            0xac, 0x95, 0x23, 0xbe, 0xea, 0x48, 0xba, 0x09, 0xb8, 0x2e, 0xcd, 0xa0, 0x79, 0x86,
-            0x23, 0x53, 0x63, 0x80, 0xc9, 0x8c, 0x8b, 0x38, 0x4c, 0xfd, 0xef, 0x4b, 0xd9, 0x57,
-            0x81, 0x24, 0xfb, 0x21, 0xbf, 0x97, 0xa7, 0x9c, 0x5a, 0x84, 0x85, 0x2b, 0xc5, 0x57,
-            0x40, 0x9e, 0x24, 0x57, 0x88, 0x77, 0xc6, 0xe3, 0xf9, 0xbc, 0x45, 0x6b, 0x49, 0x7e,
-            0xa4, 0x5f, 0xa6, 0xc9, 0x9a, 0x59, 0xcb, 0xd5, 0x4f, 0x9c, 0xca, 0x62, 0xe0, 0x01,
-            0x65, 0x77, 0x97, 0xd2, 0x74, 0x34, 0x8f, 0xb3, 0x8e, 0xdb, 0x2a, 0x22, 0x9c, 0xc7,
-            0x4d, 0x52, 0x38, 0xb3, 0xc6, 0xb0, 0x45, 0xf2, 0x9e, 0x0e, 0xa7, 0xd0, 0x9b, 0x85,
-            0x02, 0x74, 0x49, 0x52, 0x61, 0xfa, 0x33, 0x13, 0xd9, 0xb8, 0x95, 0x9c, 0x69, 0xfc,
-            0x82, 0x12, 0x11, 0xeb, 0x93, 0x23, 0x79, 0x6d, 0x15, 0x7a, 0x99, 0x33, 0x51, 0x7d,
-            0x0a, 0x51, 0x76, 0x76, 0x5f, 0x7f, 0xd6, 0x57, 0xf1, 0xfc, 0xc9, 0x75, 0x7c, 0x62,
-            0xa1, 0x14, 0xef, 0x46, 0x6f, 0x13, 0xf3, 0x78, 0x3c, 0x36, 0x69, 0x69, 0x23, 0x75,
-            0xd0, 0x10, 0xb4, 0x89, 0x4f, 0xeb, 0xbb, 0x20, 0x93, 0xf5, 0x0f, 0x3f, 0x13, 0x93,
-            0x8b, 0x20, 0x10, 0x8c, 0xd4, 0x96, 0xe2, 0xa1, 0x9f, 0xc2, 0x8e, 0x88, 0x83, 0x18,
-            0x16, 0x28, 0xb5, 0x55, 0x5d, 0x05, 0x99, 0x57, 0xd4, 0x55, 0x0b, 0x99, 0xf5, 0x73,
-            0x94, 0xe4, 0xee, 0xf9, 0x12, 0x14, 0xac, 0xd3, 0xb0, 0x2b, 0x81, 0xb4, 0x3a, 0x3f,
-            0x43, 0xb3, 0x43, 0xe8, 0x85, 0x04, 0x7e, 0x41, 0xd5, 0xc9, 0xd5, 0x83, 0xe5, 0x74,
-            0x3d, 0x20, 0x24, 0x73, 0x5b, 0xee, 0x5e, 0xb4, 0xda, 0x0d, 0xad, 0xd6, 0x33, 0x7b,
-            0x8f, 0x6b, 0x0d, 0xb2, 0x7d, 0x36, 0x32, 0x13, 0x94, 0xda, 0x5a, 0x84, 0x8c, 0xef,
-            0xd8, 0x3c, 0x32, 0xa2, 0x93, 0x6c, 0x56, 0x3b, 0x58, 0xc9, 0x20, 0x85, 0x25, 0xf0,
-            0xc5, 0x7a, 0xbe, 0xd9, 0xd9, 0x0e, 0x42, 0xf2, 0xb3, 0x4c, 0xaf, 0x76, 0x70, 0x4b,
-            0x98, 0xb5, 0xd8, 0x47, 0xdf, 0x8f, 0x5b, 0xe2, 0x1f, 0xcb, 0x3f, 0x05, 0x1e, 0x2b,
-            0xfe, 0xd2, 0x18, 0x12, 0x71, 0x3f, 0x94, 0xef, 0x4f, 0x03, 0x3e, 0xb4, 0x80, 0xb5,
-            0x51, 0x50, 0x74, 0xad, 0xbc, 0x4b, 0xc0, 0xa2, 0x63, 0x54, 0xc3, 0x43, 0x8e, 0x76,
-            0x26, 0x54, 0x86, 0x7a, 0x96, 0x7b, 0x58, 0x1c, 0x54, 0x12, 0xd7, 0x65, 0x95, 0x0a,
-            0x4a, 0xe3, 0xa3, 0xd4, 0xcc, 0x97,
-        ],
-        &[0x01, 0x00, 0x01],
-    );
 
     #[test]
     fn mpi_standard_bitlength() {
@@ -964,32 +928,41 @@ mod test {
     }
 
     #[test]
-    fn public_key_serialization() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
+    fn ecdsa_public_key() {
+        let public_key = PKPacket::new(
+            PublicKey::ECDSA(
+                CurveOID::Secp256k1,
+                &[
+                    0xfe, 0xf3, 0xaa, 0xbb, 0x21, 0xa8, 0x8f, 0xea, 0x5b, 0xc5, 0x02, 0xfd, 0x73,
+                    0x4c, 0x58, 0xeb, 0xfc, 0x8b, 0x90, 0x66, 0x97, 0xf1, 0xb9, 0xed, 0x20, 0x89,
+                    0x47, 0x9d, 0x4a, 0x8e, 0x77, 0xa9,
+                ],
+                &[
+                    0x1e, 0x67, 0xa0, 0xa2, 0x61, 0x3d, 0xd9, 0xeb, 0x1c, 0xc8, 0x91, 0xcd, 0x64,
+                    0xe5, 0x42, 0x0d, 0xa8, 0xc6, 0xc9, 0x3b, 0x61, 0xa9, 0x1e, 0xe3, 0xa4, 0x68,
+                    0xa0, 0xb1, 0x58, 0x08, 0x4a, 0x1d,
+                ],
+            ),
+            Some(Duration::from_secs(0x60f8184a)),
+        );
+    
+        println!("{:x?}", public_key.to_formatted_bytes());
 
-        // println!("{:X?}", public_key.to_formatted_bytes());
-    }
-
-    #[test]
-    fn public_key_keyid() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
+        assert_eq!(
+            public_key.to_formatted_bytes(),
+            &[
+                0x98, 0x4f, 0x04, 0x60, 0xf8, 0x18, 0x4a, 0x13, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x0a,
+                0x02, 0x03, 0x04, 0xfe, 0xf3, 0xaa, 0xbb, 0x21, 0xa8, 0x8f, 0xea, 0x5b, 0xc5, 0x02,
+                0xfd, 0x73, 0x4c, 0x58, 0xeb, 0xfc, 0x8b, 0x90, 0x66, 0x97, 0xf1, 0xb9, 0xed, 0x20,
+                0x89, 0x47, 0x9d, 0x4a, 0x8e, 0x77, 0xa9, 0x1e, 0x67, 0xa0, 0xa2, 0x61, 0x3d, 0xd9,
+                0xeb, 0x1c, 0xc8, 0x91, 0xcd, 0x64, 0xe5, 0x42, 0x0d, 0xa8, 0xc6, 0xc9, 0x3b, 0x61,
+                0xa9, 0x1e, 0xe3, 0xa4, 0x68, 0xa0, 0xb1, 0x58, 0x08, 0x4a, 0x1d,
+            ]
+        );
 
         assert_eq!(
             public_key.keyid(),
-            &[0xD3, 0x8B, 0x2A, 0xC8, 0x1B, 0xA3, 0x6F, 0xA3]
-        );
-    }
-
-    #[test]
-    fn public_key_fingerprint() {
-        let public_key = PKPacket::new(RSA_PUBLIC_KEY, Some(Duration::from_secs(0x60fc16a7)));
-
-        assert_eq!(
-            public_key.fingerprint(),
-            &[
-                0xb6, 0x57, 0x58, 0x37, 0x9a, 0x42, 0x62, 0x5f, 0xc8, 0x44, 0xc4, 0x1a, 0xd3, 0x8b,
-                0x2a, 0xc8, 0x1b, 0xa3, 0x6f, 0xa3
-            ]
+            &[0xd1, 0x1d, 0xdb, 0x06, 0x0E, 0x9B, 0xfa, 0xe6]
         );
     }
 
