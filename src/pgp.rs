@@ -1,7 +1,6 @@
 use crate::utils;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::SignatureRecid;
 use std::ops::Index;
-use std::cmp;
 use std::time::{Duration, SystemTime};
 
 // TODO What does the Recid mean?
@@ -19,12 +18,12 @@ fn sha160_hash(buffer: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-pub fn sha512_hash(buffer: &[u8]) -> Vec<u8> {
+pub fn sha256_hash(buffer: &[u8]) -> Vec<u8> {
     use curv::arithmetic::traits::Converter;
-    use curv::cryptographic_primitives::hashing::hash_sha512::HSha512;
+    use curv::cryptographic_primitives::hashing::hash_sha256::HSha256;
     use curv::cryptographic_primitives::hashing::traits::Hash;
 
-    let hasher = HSha512::create_hash_from_slice(buffer);
+    let hasher = HSha256::create_hash_from_slice(buffer);
     hasher.to_bytes()
 }
 
@@ -180,17 +179,18 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
 /// of the EC point. This whole bitstring is then treated as the
 /// MPI and serialized.
 ///
-/// The standard specifies the use of zero-padding when serializing,
-/// but we have never run into the case where this causes an issue
-fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8], field_size: u16) {
-    let length = std::cmp::max(get_mpi_bits(x), field_size)
-                + std::cmp::max(get_mpi_bits(y), field_size)
-                + get_mpi_bits(&[ECPointCompression::Uncompressed as u8]);
+/// The standard requires that the individual coordinates of the point
+/// be zero padded to the size of the underlying field, which is 
+/// done via the conversion between `BigInt` and `&[u8]`.
+fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
+    let mut mpi = Vec::new();
+    mpi.push(ECPointCompression::Uncompressed as u8);
+    mpi.extend_from_slice(x);
+    mpi.extend_from_slice(y);
+    let len = get_mpi_bits(&mpi);
 
-    buffer.extend_from_slice(&length.to_be_bytes());
-    buffer.push(ECPointCompression::Uncompressed as u8);
-    buffer.extend_from_slice(x);
-    buffer.extend_from_slice(y);
+    buffer.extend_from_slice(&len.to_be_bytes());
+    buffer.append(&mut mpi);
 }
 
 /// A structure representing a fully formed OpenPGP message.
@@ -225,8 +225,7 @@ impl<'a> Message<'a> {
     }
     pub fn finalize_signature(&mut self, hash: &[u8], sig: SignatureData) -> &Message {
         let hash = if hash.len() > 0 {
-            let len = hash.len();
-            [hash[len - 2], hash[len - 1]]
+            [hash[0], hash[1]]
         } else {
             panic!("Something went wrong with the hash values!")
         };
@@ -345,7 +344,7 @@ enum Version {
 #[derive(Copy, Clone)]
 enum SigType {
     Binary = 0x00,
-    PositiveIDPKCert = 0x13,
+    PositiveIDPKCert = 0x10,
 }
 
 #[repr(u8)]
@@ -637,7 +636,7 @@ impl<'a> ToPGPBytes for PublicKey<'a> {
                 buffer.push(CURVE_REPR[*oid].len() as u8);
                 buffer.extend(CURVE_REPR[*oid]);
 
-                format_ec_point(&mut buffer, key_x, key_y, 256);
+                format_ec_point(&mut buffer, key_x, key_y);
             }
         }
         buffer
@@ -702,10 +701,11 @@ impl<'a> ToPGPBytes for PartialSignature {
             self.pubkey_algo as u8,
             self.hash_algo as u8,
         ];
+        // TODO does this pake sense?
         let mut hashable_subpackets = self
             .subpackets
             .iter()
-            .map(|subpkt| subpkt.to_formatted_bytes())
+            .map(|subpkt| subpkt.to_hashable_bytes())
             .flatten()
             .collect::<Vec<u8>>();
         buffer.extend((hashable_subpackets.len() as u16).to_be_bytes());
@@ -883,9 +883,7 @@ impl ToPGPBytes for PKPacket<'_> {
     fn to_hashable_bytes(&self) -> Vec<u8> {
         let mut buffer = vec![0x99];
         let body = self.to_raw_bytes();
-        let header = calculate_packet_header(&body, PacketHeader::PublicKey);
-        assert_eq!(header.len(), 2);
-        buffer.extend(header);
+        buffer.extend((body.len() as u16).to_be_bytes());
         buffer.extend(body);
         buffer
     }

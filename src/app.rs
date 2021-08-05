@@ -64,7 +64,7 @@ pub fn keygen_subcommand(
     );
 
     let hashable = message.get_hashable();
-    let hashed = sha512_hash(&hashable);
+    let hashed = sha256_hash(&hashable);
 
     let signed = protocol::signing::distributed_sign(&hashable, &config, public_key);
     if let Ok(signature) = signed {
