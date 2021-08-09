@@ -91,12 +91,13 @@ fn duration_to_bytes(duration: Duration) -> Vec<u8> {
 /// The newline has to be part of the signature
 /// We add another newline to leave a blank space between the armor header
 /// and the armored PGP, as that line is used for additional properties
-pub fn armor_binary_output(buffer: &[u8]) -> Vec<u8> {
-    let mut armor = Vec::new();
+pub fn armor_binary_output(buffer: &[u8]) -> String {
+    let mut armor = String::new();
 
-    armor.extend(String::from("-----BEGIN PGP SIGNATURE-----\n\n").as_bytes());
-    armor.extend(binary_to_radix64(buffer));
-    armor.extend(String::from("\n----END PGP SIGNATURE-----\n").as_bytes());
+    armor.push_str("-----BEGIN PGP SIGNATURE-----\n\n");
+    let encoded = String::from_utf8(binary_to_radix64(buffer)).unwrap();
+    armor.push_str(&encoded);
+    armor.push_str("\n----END PGP SIGNATURE-----\n");
 
     armor
 }

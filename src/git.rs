@@ -1,7 +1,35 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::path::PathBuf;
 use std::fs;
+
+use std::collections::HashMap;
+use lazy_static::lazy_static;
+
+const TAG_MSG: &'static str = "
+# Write a message for tag:
+#   {}
+# Lines starting with '#' will be ignored.";
+    
+
+
+lazy_static! {
+    pub static ref GIT_CONFIG: HashMap<String, String> = {
+        let mut cfg = HashMap::new();
+        let config = parse_cmd_output(&Command::new("git").args(&["config", "-l"]).output().unwrap().stdout);
+        for line in config.lines() {
+            let split = line.split("=").collect::<Vec<&str>>();
+            let key = split[0].split(".").collect::<Vec<&str>>()[1];
+
+            cfg.insert(key.to_string(), split[1].to_string());
+        };
+        cfg
+    };
+
+
+
+}
+
 
 // TODO This does not take into account windows \r
 // (though to be fair, not sure if this compiles on windows in the first place)
@@ -49,36 +77,12 @@ pub fn get_commit_hash(commit: &str) -> String {
     String::from("")
 }
 
-pub fn get_user_name() -> String {
-    let user = match Command::new("git")
-        .args(&["config", "--get", "user.name"])
-        .output()
-    {
-        Ok(dir) => dir,
-        Err(e) => panic!("Git config error: {}", e),
-    };
 
-    if !user.stdout.is_empty() {
-        return parse_cmd_output(&user.stdout);
+pub fn get_git_config(config: &str) -> String {
+    match GIT_CONFIG.get(config) {
+        Some(val) => val.clone(),
+        None => String::from("")
     }
-
-    String::from("")
-}
-
-pub fn get_user_email() -> String {
-    let email = match Command::new("git")
-        .args(&["config", "--get", "user.email"])
-        .output()
-    {
-        Ok(dir) => dir,
-        Err(e) => panic!("Git config error: {}", e),
-    };
-
-    if !email.stdout.is_empty() {
-        return parse_cmd_output(&email.stdout);
-    }
-
-    String::from("")
 }
 
 // TODO This is part of GNU coreutils and therefore might
@@ -94,17 +98,42 @@ fn get_current_timezone() -> String {
     String::from("")
 }
 
-pub fn get_help_string() -> String {
-    let help = match Command::new("git").arg("--help").output() {
-        Ok(h) => h,
-        Err(e) => panic!("Git error: {}", e),
-    };
-    if !help.stdout.is_empty() {
-        return parse_cmd_output(&help.stdout);
-    }
+// TODO If the git editor is not present, then should check the system $EDITOR variable
+pub fn get_git_tag_message(tag: &str) -> String {
+    let mut editor_child = Command::new(get_git_config("editor"));
+    let editor_child = editor_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());
 
-    String::from("")
+    let tag_message = str::replace(TAG_MSG, "{}", tag);
+    
+    let mut file = PathBuf::from(get_repo_root());
+    file.push(".git");
+    file.push("TAG_EDITMSG");
+    fs::write(&file, tag_message).expect("Could not write message description");
+   
+    editor_child.spawn().unwrap().wait().unwrap();
+    println!("Gained back control");
+    let output = fs::read_to_string(&file).expect("Some reading error");
+    
+    let len = output.len() - TAG_MSG.len();
+    if len == 0 {
+        return String::from("")
+    };
+
+    // Clean up output
+    let mut tag_msg = String::with_capacity(len);
+
+    for line in output.lines() {
+        if line.starts_with("#") {
+            continue;
+        }
+        tag_msg.push_str(line);
+    };
+    
+    fs::remove_file(&file).expect("Could not remove description file");
+
+    tag_msg 
 }
+
 
 pub fn create_tag_string(
     commit: &str,
@@ -114,10 +143,10 @@ pub fn create_tag_string(
 ) -> String {
     format!(
         "object {}\ntype commit \ntag {}\ntagger {} {} {} {}\n\n{}\n",
-        commit,
+        commit, 
         tag_name,
-        get_user_name(),
-        get_user_email(),
+        get_git_config("name"),
+        get_git_config("email"),
         time.as_secs().to_string(),
         get_current_timezone(),
         tag_message

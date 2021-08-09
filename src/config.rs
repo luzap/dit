@@ -7,6 +7,7 @@ use crate::utils;
 use crate::git;
 
 // TODO See if it might be a better idea to use PathBuf to create the path buffers
+// TODO Most of this can be adapted to be used for storing the public key
 
 const CONFIG_FILE: &str = "config.toml";
 const CONFIG_DIR: &str = ".dit";

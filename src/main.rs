@@ -22,15 +22,13 @@ fn main() {
 
     match app.get_matches().subcommand() {
         ("keygen", keygen_matches) => {
-            println!("Starting keygen with args {:?}", keygen_matches);
             let keygen_result = app::keygen_subcommand(config, keygen_matches);
             // TODO Save the result in the correct folder
             // TODO Let's ignore user stuff for the moment
 
         },
         ("start-tag", tag_matches) => {
-            println!("Starting tagging with args: {:?}", tag_matches);
-            // let tag_result = app::tag_subcommand(config, tag_matches);
+            let tag_result = app::tag_subcommand(config, tag_matches);
         },
         (other, args) => {
             app::git_subcommand(other, args);
