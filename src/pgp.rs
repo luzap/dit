@@ -3,6 +3,9 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Signature
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
 
+use std::fs;
+use std::path::{PathBuf, Path};
+
 // TODO What does the Recid mean?
 pub fn encode_sig_data(sig: SignatureRecid) -> SignatureData {
     use curv::arithmetic::traits::Converter;
@@ -16,15 +19,6 @@ fn sha160_hash(buffer: &[u8]) -> Vec<u8> {
     let mut hasher = Sha1::new();
     hasher.update(buffer);
     hasher.finalize().to_vec()
-}
-
-pub fn sha256_hash(buffer: &[u8]) -> Vec<u8> {
-    use curv::arithmetic::traits::Converter;
-    use curv::cryptographic_primitives::hashing::hash_sha256::HSha256;
-    use curv::cryptographic_primitives::hashing::traits::Hash;
-
-    let hasher = HSha256::create_hash_from_slice(buffer);
-    hasher.to_bytes()
 }
 
 const BIN_TO_ASCII: [u8; 64] = [
@@ -181,7 +175,7 @@ fn format_subpacket_length(buffer: &mut [u8]) -> &[u8] {
 /// MPI and serialized.
 ///
 /// The standard requires that the individual coordinates of the point
-/// be zero padded to the size of the underlying field, which is 
+/// be zero padded to the size of the underlying field, which is
 /// done via the conversion between `BigInt` and `&[u8]`.
 fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
     let mut mpi = Vec::new();
@@ -312,6 +306,38 @@ impl<'a> Message<'a> {
             }
         }
         buffer
+    }
+
+    pub fn get_sha256_hash(&self, header: Option<Vec<u8>>) -> Vec<u8> {
+        use curv::arithmetic::traits::Converter;
+        use curv::cryptographic_primitives::hashing::hash_sha256::HSha256;
+        use curv::cryptographic_primitives::hashing::traits::Hash;
+
+        let mut hashable = self.get_hashable();
+        if let Some(header) = header {
+            hashable.extend(header);
+        }
+
+        let hasher = HSha256::create_hash_from_slice(&hashable);
+        hasher.to_bytes()
+    }
+
+    pub fn get_sha160_hash(&self, header: Option<Vec<u8>>) -> Vec<u8> {
+        let mut hashable = self.get_hashable(); 
+        if let Some(header) = header {
+            hashable.extend(header);
+        }
+    
+        sha160_hash(&hashable)
+    }
+
+    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> Result<(), ()> {
+        let file_path: PathBuf = [path.as_ref(), filename.as_ref()].iter().collect();
+
+        match fs::write(path, self.get_formatted_message()) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(())
+        }
     }
 
     pub fn get_formatted_message(&self) -> Vec<u8> {
@@ -944,7 +970,6 @@ mod test {
             ),
             Some(Duration::from_secs(0x60f8184a)),
         );
-    
         println!("{:x?}", public_key.to_formatted_bytes());
 
         assert_eq!(

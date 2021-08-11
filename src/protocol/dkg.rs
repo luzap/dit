@@ -2,7 +2,6 @@ use super::utils::Config;
 use crate::channel;
 use crate::channel::Errors;
 use crate::protocol::PartyKeyPair;
-use std::time;
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
     keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4, KeyGenStage1Input,

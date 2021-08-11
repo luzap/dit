@@ -1,8 +1,9 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::channel;
+use crate::config as cfg;
 use crate::git;
 use crate::pgp::*;
 use crate::protocol;
@@ -11,8 +12,6 @@ use crate::utils::Config;
 
 use curv::arithmetic::Converter;
 use curv::elliptic::curves::traits::*;
-
-use serde_json;
 
 const GIT: &str = "git";
 
@@ -54,6 +53,7 @@ pub fn keygen_subcommand(
     let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
     let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
 
+    // TODO Forgetting to use this
     let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
 
     let git_user = git::get_git_config("name");
@@ -70,7 +70,7 @@ pub fn keygen_subcommand(
 
     // TODO Move this to its own function within the message
     let hashable = message.get_hashable();
-    let hashed = sha256_hash(&hashable);
+    let hashed = message.get_sha256_hash(None);
 
     let signed = protocol::signing::distributed_sign(&hashable, &config, public_key.clone());
     if let Ok(signature) = signed {
@@ -78,17 +78,13 @@ pub fn keygen_subcommand(
         let hash = &hashed[hashed.len() - 2..];
         message.finalize_signature(hash, sig_data);
 
-        // TODO Move this to a separate function
-        let signature = message.get_formatted_message();
-
-        fs::write(key_file, signature).expect("File already exists");
-        fs::write(
-            args.unwrap()
+        let _ = message.write_to_file(
+            &cfg::KEY_DIR.clone(),
+            &args
+                .unwrap()
                 .value_of("pubkey")
                 .unwrap_or("public_key.json"),
-            serde_json::to_string(&public_key).unwrap(),
-        )
-        .expect("Cannot write to file");
+        );
     } else {
         println!("Something went wrong during signing");
     }
@@ -106,36 +102,39 @@ pub fn tag_subcommand(config: Config, args: Option<&ArgMatches>) -> Result<(), c
             } else {
                 git::get_git_tag_message(tag)
             };
-            let keyfile = args.value_of("keyfile").unwrap_or("public_key.json");
-            let key_string = String::from_utf8(fs::read(keyfile).expect("Could not open file!")).unwrap();
-            let key: protocol::PartyKeyPair = serde_json::from_str(&key_string).unwrap();
+
+            // TODO Anything that can be done here?
+            //
+            let keyfile = Path::join(
+                &cfg::KEY_DIR,
+                &args.value_of("keyfile").unwrap_or("public_key.json"),
+            );
+            let key: protocol::PartyKeyPair = utils::read_data_from_file(&keyfile);
 
             let hash = git::get_commit_hash(commit);
             let signing_time = utils::get_current_epoch();
 
             let mut tag_string = git::create_tag_string(&hash, &tag, &message, signing_time);
+
+            // TODO I don't like this code block
             let mut message = Message::new();
             message.new_signature(signing_time);
             let mut hashable = tag_string.as_bytes().to_vec();
             hashable.append(&mut message.get_hashable());
-            let hashed = sha256_hash(&hashable);
+            let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
 
             if let Ok(signature) = protocol::signing::distributed_sign(&hashable, &config, key) {
-
                 let sig_data = encode_sig_data(signature);
 
-                let hash = &hashed[hashed.len() - 2..];
+                let hash = &hash[hash.len() - 2..];
                 message.finalize_signature(hash, sig_data);
 
                 // TODO Move this to a separate function
                 let signature = message.get_formatted_message();
                 let armor = armor_binary_output(&signature);
-                
                 tag_string.push_str(&armor);
 
                 git::create_git_tag(tag, &tag_string);
-
-
             }
         }
     }

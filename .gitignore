@@ -2,5 +2,8 @@
 *.pgp
 *.gpg
 *.lock
+*.json
+*.txt*
 test/
 test/*
+
