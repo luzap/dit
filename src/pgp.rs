@@ -334,7 +334,7 @@ impl<'a> Message<'a> {
     pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> Result<(), ()> {
         let file_path: PathBuf = [path.as_ref(), filename.as_ref()].iter().collect();
 
-        match fs::write(path, self.get_formatted_message()) {
+        match fs::write(file_path, self.get_formatted_message()) {
             Ok(_) => Ok(()),
             Err(_) => Err(())
         }

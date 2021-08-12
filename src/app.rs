@@ -1,5 +1,6 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::channel;
@@ -68,23 +69,27 @@ pub fn keygen_subcommand(
         signing_time,
     );
 
-    // TODO Move this to its own function within the message
     let hashable = message.get_hashable();
     let hashed = message.get_sha256_hash(None);
+    let hashed = &hashed[hashed.len() - 2..];
 
     let signed = protocol::signing::distributed_sign(&hashable, &config, public_key.clone());
     if let Ok(signature) = signed {
         let sig_data = encode_sig_data(signature);
-        let hash = &hashed[hashed.len() - 2..];
-        message.finalize_signature(hash, sig_data);
+        message.finalize_signature(hashed, sig_data);
 
-        let _ = message.write_to_file(
-            &cfg::KEY_DIR.clone(),
-            &args
-                .unwrap()
-                .value_of("pubkey")
-                .unwrap_or("public_key.json"),
-        );
+        let _ = message.write_to_file(&cfg::KEY_DIR.clone(), &key_file);
+
+        fs::write(
+            Path::join(
+                &cfg::KEY_DIR.clone(),
+                args.unwrap()
+                    .value_of("pubkey")
+                    .unwrap_or("public_key.json"),
+            ),
+            serde_json::to_string(&public_key).unwrap(),
+        )
+        .unwrap();
     } else {
         println!("Something went wrong during signing");
     }

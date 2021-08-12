@@ -18,9 +18,6 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{
     LocalSignature
 };
 
-use multi_party_ecdsa::utilities::mta::{MessageA, MessageB};
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::*;
-
 
 use paillier::*;
 use zk_paillier::zkproofs::DLogStatement;
@@ -32,7 +29,6 @@ use std::{env, thread, time};
 use std::fmt;
 
 
-#[allow(dead_code)]
 pub fn check_sig(r: &FE, s: &FE, msg: &BigInt, pk: &GE) {
     use secp256k1::{verify, Message, PublicKey, PublicKeyFormat, Signature};
 
@@ -63,8 +59,6 @@ pub fn check_sig(r: &FE, s: &FE, msg: &BigInt, pk: &GE) {
     assert!(is_correct);
 }
 
-
-
 pub fn extract<'a, T: Deserialize<'a>>(vals: &'a Vec< String>, size: usize) -> Result<Vec<T>, ()> {
     let mut results: Vec<T> = Vec::with_capacity(size);
 
@@ -86,7 +80,4 @@ impl From<Params> for Parameters {
         }
     }
 }
-
-
-
 

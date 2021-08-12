@@ -6,4 +6,5 @@
 *.txt*
 test/
 test/*
+.keys/
 
