@@ -215,7 +215,7 @@ impl<'a> Message<'a> {
             .push(Packet::PartialSignature(PartialSignature::new(
                 SigType::Binary,
                 PublicKeyAlgorithm::ECDSA,
-                Some(time),
+                time,
             )));
     }
     pub fn finalize_signature(&mut self, hash: &[u8], sig: SignatureData) -> &Message {
@@ -263,7 +263,7 @@ impl<'a> Message<'a> {
         let mut partial = PartialSignature::new(
             SigType::PositiveIDPKCert,
             PublicKeyAlgorithm::ECDSA,
-            Some(time),
+            time,
         );
         // Both the subpackets and their order have been derived from a GnuPG created key
         // in order to conform as much as possible with any undocumented implementation
@@ -331,13 +331,10 @@ impl<'a> Message<'a> {
         sha160_hash(&hashable)
     }
 
-    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> Result<(), ()> {
+    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> utils::Result<()> {
         let file_path: PathBuf = [path.as_ref(), filename.as_ref()].iter().collect();
 
-        match fs::write(file_path, self.get_formatted_message()) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(())
-        }
+        Ok(fs::write(file_path, self.get_formatted_message())?)
     }
 
     pub fn get_formatted_message(&self) -> Vec<u8> {
@@ -696,13 +693,9 @@ impl PartialSignature {
     fn new(
         sigtype: SigType,
         pubkey_algo: PublicKeyAlgorithm,
-        time: Option<Duration>,
+        time: Duration,
     ) -> PartialSignature {
         // TODO Move to a separate function
-        let epoch = match time {
-            Some(n) => n,
-            None => utils::get_current_epoch(),
-        };
 
         let mut partial_signature = PartialSignature {
             version: Version::V4,
@@ -714,7 +707,7 @@ impl PartialSignature {
 
         partial_signature
             .subpackets
-            .push(HSigSubpacket::CreationTime(epoch));
+            .push(HSigSubpacket::CreationTime(time));
 
         partial_signature
     }

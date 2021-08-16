@@ -10,7 +10,7 @@ use lazy_static::lazy_static;
 
 
 lazy_static! {
-    pub static ref KEY_DIR: PathBuf = [&git::get_repo_root(), ".keys"].iter().collect();
+    pub static ref KEY_DIR: PathBuf = [&git::get_repo_root(), ".dit"].iter().collect();
     pub static ref LOCAL_CONFIG: PathBuf = [&git::get_repo_root(), "config.toml"].iter().collect();
 }
 

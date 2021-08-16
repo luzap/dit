@@ -1,6 +1,5 @@
-use super::utils::Config;
+use super::utils::{Config, Result};
 use crate::channel;
-use crate::channel::Errors;
 use crate::protocol::PartyKeyPair;
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
@@ -17,20 +16,27 @@ use curv::elliptic::curves::secp256_k1::{FE, GE};
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
+pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair > {
+
+    // TODO Get rid of this
     let params = Parameters {
         threshold: 2,
         share_count: 4,
     };
-    let mut channel = channel::Channel::new(format!(
+
+
+    let user = channel::User {
+        username: "Lukas Zapolskas".to_string(),
+        email: "lukas.zapolskas@gmail.com".to_string()
+    };
+
+
+    let mut channel = channel::Channel::new(user, format!(
         "http://{}:{}",
         config.server.address, config.server.port
-    ));
+    ))?;
 
-    let party_num_int = match channel.signup_keygen() {
-        Ok(i) => i,
-        Err(_) => return Err(Errors::Response),
-    };
+    let party_num_int = channel.signup_keygen()?;
 
     let input_stage1 = KeyGenStage1Input {
         index: (party_num_int - 1) as usize,
@@ -38,17 +44,16 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
 
     let res_stage1 = keygen_stage1(&input_stage1);
 
-    match channel.broadcast(
+
+    channel.broadcast(
         party_num_int,
         "round1",
         serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
-    ) {
-        Ok(()) => {}
-        Err(()) => return Err(Errors::Send),
-    };
+    )?;
 
     let round1_ans_vec =
         channel.poll_for_broadcasts(party_num_int, params.share_count, "round1");
+
     let mut bc1_vec = round1_ans_vec
         .iter()
         .map(|m| serde_json::from_str::<KeyGenBroadcastMessage1>(m).unwrap())
@@ -56,14 +61,11 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
 
     bc1_vec.insert(party_num_int as usize - 1, res_stage1.bc_com1_l);
 
-    match channel.broadcast(
+    channel.broadcast(
         party_num_int,
         "round2",
         serde_json::to_string(&res_stage1.decom1_l).unwrap(),
-    ) {
-        Ok(()) => {}
-        Err(()) => return Err(Errors::Send),
-    };
+    )?;
 
     let round2_ans_vec =
         channel.poll_for_broadcasts(party_num_int, params.share_count, "round2");
@@ -96,14 +98,13 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
 
     for (k, i) in (1..=params.share_count).enumerate() {
         if i != party_num_int {
-            assert!(channel
+            channel
                 .sendp2p(
                     party_num_int,
                     i,
                     "round3",
-                    serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
-                )
-                .is_ok());
+                    serde_json::to_string(&res_stage2.secret_shares_s[k])?,
+                )?;
         }
     }
     // get shares from other parties.
@@ -116,18 +117,17 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
         if i == party_num_int {
             party_shares.push(res_stage2.secret_shares_s[(i - 1) as usize]);
         } else {
-            party_shares.push(serde_json::from_str(&round3_ans_vec[j]).unwrap());
+            party_shares.push(serde_json::from_str(&round3_ans_vec[j])?);
             j += 1;
         }
     }
 
-    assert!(channel
+    channel
         .broadcast(
             party_num_int,
             "round4",
-            serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
-        )
-        .is_ok());
+            serde_json::to_string(&res_stage2.vss_scheme_s)?,
+        )?;
 
     //get vss_scheme for others.
     let round4_ans_vec =
@@ -139,7 +139,7 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
         if i == party_num_int {
             vss_scheme_vec.push(res_stage2.vss_scheme_s.clone());
         } else {
-            let vss_scheme_j: VerifiableSS<GE> = serde_json::from_str(&round4_ans_vec[j]).unwrap();
+            let vss_scheme_j: VerifiableSS<GE> = serde_json::from_str(&round4_ans_vec[j])?;
             vss_scheme_vec.push(vss_scheme_j);
             j += 1;
         }
@@ -154,13 +154,13 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
     };
     let res_stage3 = keygen_stage3(&input_stage3).expect("stage 3 keygen failed.");
     // round 5: send dlog proof
-    assert!(channel
+    channel
         .broadcast(
             party_num_int,
             "round5",
-            serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
-        )
-        .is_ok());
+            serde_json::to_string(&res_stage3.dlog_proof_s)?,
+        )?;
+
     let round5_ans_vec =
         channel.poll_for_broadcasts(party_num_int, params.share_count, "round5");
 
@@ -170,7 +170,7 @@ pub fn distributed_keygen(config: &Config) -> Result<PartyKeyPair, Errors> {
         if i == party_num_int {
             dlog_proof_vec.push(res_stage3.dlog_proof_s.clone());
         } else {
-            let dlog_proof_j: DLogProof<GE> = serde_json::from_str(&round5_ans_vec[j]).unwrap();
+            let dlog_proof_j: DLogProof<GE> = serde_json::from_str(&round5_ans_vec[j])?;
             dlog_proof_vec.push(dlog_proof_j);
             j += 1;
         }

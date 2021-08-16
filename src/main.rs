@@ -1,3 +1,4 @@
+#![feature(exit_status_error)]
 pub mod pgp;
 pub mod app;
 pub mod git;
@@ -5,7 +6,6 @@ pub mod channel;
 pub mod utils;
 pub mod config;
 pub mod protocol;
-
 
 fn main() {
     let app = app::build_app();

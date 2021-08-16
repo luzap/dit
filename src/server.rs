@@ -3,18 +3,43 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use rocket::{post, routes, State, get};
+use rocket::{get, post, routes, State};
 use rocket_contrib::json::Json;
-use rocket::http::Status;
-use uuid::Uuid;
+use uuid;
 
 mod channel;
-use channel::{Entry, Index, Key, Params, PartySignup};
+mod utils;
+use channel::*;
+use utils::Operation;
 
+// TODO The different handlers for both post and get are a bit of a hack and there's probably
+// better things to do here
+#[get("/get_operation", format = "json")]
+fn get_state(db: State<RwLock<HashMap<Key, String>>>) -> Json<Operation> {
+    let db = db.read().unwrap();
+    match db.get(OP_KEY) {
+        Some(current_state) => Json(serde_json::from_str(&current_state).unwrap()),
+        None => unreachable!(),
+    }
+}
 
-#[get("/heartbeat")]
-fn heartbeat() -> Status {
-    Status::Ok
+#[post("/set_operation", format = "json", data = "<request>")]
+fn set_operation(db: State<RwLock<HashMap<Key, String>>>, request: Json<Operation>) {
+    let read_db = db.read().unwrap();
+    match read_db.get(OP_KEY) {
+        // Don't allow any circumvention of the blame operation
+        Some(val) => match serde_json::from_str(val).unwrap() {
+            Operation::Blame {} => return,
+            _ => {},
+        },
+        None => unreachable!()
+    };
+
+    let mut db = db.write().unwrap();
+    db.insert(
+        OP_KEY.to_string(),
+        serde_json::to_string(&request.0).unwrap(),
+    );
 }
 
 #[post("/get", format = "json", data = "<request>")]
@@ -22,6 +47,8 @@ fn get(
     db_mtx: State<RwLock<HashMap<Key, String>>>,
     request: Json<Index>,
 ) -> Json<Result<Entry, ()>> {
+
+
     let index: Index = request.0;
     let hm = db_mtx.read().unwrap();
     match hm.get(&index.key) {
@@ -49,96 +76,58 @@ fn blame(_db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) {
     println!("Request: {:?}", request.0);
 }
 
+#[post("/register", format = "json", data = "<request>")]
+fn register(
+    users_db: State<RwLock<HashMap<String, UserData>>>,
+    request: Json<User>,
+)  {
+    let request = request.0;
+    let uuid = {
+        let read_db = users_db
+            .read()
+            .expect("Could not get a read lock on the user db");
 
-#[post("/signupkeygen", format = "json")]
-fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<PartySignup> {
-    let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
-    let parties = params.parties.parse::<u16>().unwrap();
-
-    let key = "signup-keygen".to_string();
-
-    let party_signup = {
-        let hm = db_mtx.read().unwrap();
-        let value = hm.get(&key).unwrap();
-        let client_signup: PartySignup = serde_json::from_str(value).unwrap();
-        if client_signup.number < parties {
-            PartySignup {
-                number: client_signup.number + 1,
-                uuid: client_signup.uuid,
-            }
-        } else {
-            PartySignup {
-                number: 1,
-                uuid: Uuid::new_v4().to_string(),
+        match read_db.get(&request.username) {
+            // TODO Add some verification
+            Some(user_data) => user_data.uuid.clone(),
+            None => {
+                uuid::Uuid::new_v4().to_string()
             }
         }
     };
 
-    let mut hm = db_mtx.write().unwrap();
-    hm.insert(key, serde_json::to_string(&party_signup).unwrap());
-    Json(party_signup)
+    users_db.write().expect("Could not get write lock").insert(
+        request.username.clone(),
+        UserData {
+            name: request.username,
+            email: request.email,
+            uuid,
+        },
+    );
 }
 
-#[post("/signupsign", format = "json")]
-fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<PartySignup> {
-    //read parameters:
-    let params: Params = Params {parties: "4".to_string(), threshold: "2".to_string() };
-    let threshold = params.threshold.parse::<u16>().unwrap();
-    let key = "signup-sign".to_string();
-
-    let party_signup = {
-        let hm = db_mtx.read().unwrap();
-        let value = hm.get(&key).unwrap();
-        let client_signup: PartySignup = serde_json::from_str(value).unwrap();
-        if client_signup.number < threshold + 1 {
-            PartySignup {
-                number: client_signup.number + 1,
-                uuid: client_signup.uuid,
-            }
-        } else {
-            PartySignup {
-                number: 1,
-                uuid: Uuid::new_v4().to_string(),
-            }
-        }
-    };
-
-    let mut hm = db_mtx.write().unwrap();
-    hm.insert(key, serde_json::to_string(&party_signup).unwrap());
-    Json(party_signup)
+struct UserData {
+    name: String,
+    email: String,
+    uuid: String,
 }
 
+const OP_KEY: &str = "operation";
 
 fn main() {
-    let db: HashMap<Key, String> = HashMap::new();
-    let db_mtx = RwLock::new(db);
+    let mut data: HashMap<Key, String> = HashMap::new();
+    data.insert(
+        OP_KEY.to_string(),
+        serde_json::to_string(&Operation::Idle).unwrap(),
+    );
 
-    let keygen_key = "signup-keygen".to_string();
-    let sign_key = "signup-sign".to_string();
-
-    let uuid_keygen = Uuid::new_v4().to_string();
-    let uuid_sign = Uuid::new_v4().to_string();
-
-    let party1 = 0;
-    let party_signup_keygen = PartySignup {
-        number: party1,
-        uuid: uuid_keygen,
-    };
-    let party_signup_sign = PartySignup {
-        number: party1,
-        uuid: uuid_sign,
-    };
-    {
-        let mut hm = db_mtx.write().unwrap();
-        hm.insert(
-            keygen_key,
-            serde_json::to_string(&party_signup_keygen).unwrap(),
-        );
-        hm.insert(sign_key, serde_json::to_string(&party_signup_sign).unwrap());
-    }
+    let data_db = RwLock::new(data);
+    let users: HashMap<String, UserData> = HashMap::new();
+    let users_db = RwLock::new(users);
 
     rocket::ignite()
-        .mount("/", routes![get, set, signup_keygen, signup_sign, blame])
-        .manage(db_mtx)
+        .mount("/", routes![get, set, blame, register])
+        .manage(data_db)
+        .manage(users_db)
         .launch();
 }
