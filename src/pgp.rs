@@ -1,4 +1,4 @@
-use crate::utils;
+use crate::errors;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::SignatureRecid;
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
@@ -331,7 +331,7 @@ impl<'a> Message<'a> {
         sha160_hash(&hashable)
     }
 
-    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> utils::Result<()> {
+    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> errors::Result<()> {
         let file_path: PathBuf = [path.as_ref(), filename.as_ref()].iter().collect();
 
         Ok(fs::write(file_path, self.get_formatted_message())?)

@@ -1,5 +1,14 @@
-use serde::{Deserialize, Serialize};
-use std::{thread, time};
+use std::{time, thread};
+use serde::{Serialize, Deserialize};
+
+// TODO Figure out the correct methods and extract them
+
+#[derive(Debug)]
+pub enum Errors {
+    Deserialization,
+    Response,
+    Send
+}
 
 pub type Key = String;
 
@@ -22,14 +31,8 @@ pub struct Entry {
 
 #[derive(Serialize, Deserialize)]
 pub struct Params {
-    pub parties: u16,
-    pub threshold: u16,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct User {
-    pub username: String,
-    pub email: String,
+    pub parties: String,
+    pub threshold: String,
 }
 
 pub struct Channel {
@@ -37,52 +40,17 @@ pub struct Channel {
     uuid: String,
     address: String,
     retries: u8,
-    retry_delay: time::Duration,
-}
-
-// TODO Refactor
-fn post_request<T>(
-    client: &reqwest::Client,
-    address: &str,
-    endpoint: &str,
-    body: &T,
-) -> Option<String>
-where
-    T: serde::Serialize,
-{
-    let res = client
-        .post(&format!("{}/{}", address, endpoint))
-        .json(&body)
-        .send();
-
-    if let Ok(mut res) = res {
-        return Some(res.text().unwrap());
-    }
-    None
+    retry_delay: time::Duration
 }
 
 impl Channel {
-    pub fn new(user: User, server: String) -> Channel {
-        let client = reqwest::Client::new();
-        let retry_delay = time::Duration::from_millis(250);
-
-        if let Some(registration) = post_request(&client, &server, "register", &user) {
-            let registration: PartySignup = serde_json::from_str(&registration).unwrap();
-            Channel {
-                client,
-                retries: 3,
-                uuid: registration.uuid,
-                address: server,
-                retry_delay,
-            }
-        } else {
-            Channel {
-                client,
-                retries: 3,
-                uuid: "".to_string(),
-                address: server,
-                retry_delay,
-            }
+    pub fn new(server: String) -> Channel {
+        Channel {
+            client: reqwest::Client::new(), 
+            retries: 3,
+            uuid: "".to_string(),
+            address: String::from(server),
+            retry_delay: time::Duration::from_millis(250)
         }
     }
 
@@ -91,18 +59,30 @@ impl Channel {
         T: serde::ser::Serialize,
     {
         for _ in 1..self.retries {
-            if let Some(response) = post_request(&self.client, &self.address, path, &body) {
-                return Some(response);
-            } else {
-                thread::sleep(self.retry_delay);
-            };
+            let res = self.client
+                .post(&format!("{}/{}", self.address, path))
+                .json(&body)
+                .send();
+
+            if let Ok(mut res) = res {
+                return Some(res.text().unwrap());
+            }
+            thread::sleep(self.retry_delay);
         }
         None
     }
 
-    pub fn broadcast(&self, party_num: u16, round: &str, data: String) -> Result<(), ()> {
+    pub fn broadcast(
+        &self,
+        party_num: u16,
+        round: &str,
+        data: String,
+    ) -> Result<(), ()> {
         let key = format!("{}-{}-{}", party_num, round, self.uuid);
-        let entry = Entry { key, value: data };
+        let entry = Entry {
+            key,
+            value: data,
+        };
 
         let res_body = self.postb("set", entry).unwrap();
         serde_json::from_str(&res_body).unwrap()
@@ -117,13 +97,21 @@ impl Channel {
     ) -> Result<(), ()> {
         let key = format!("{}-{}-{}-{}", party_from, party_to, round, self.uuid);
 
-        let entry = Entry { key, value: data };
+        let entry = Entry {
+            key,
+            value: data,
+        };
 
         let res_body = self.postb("set", entry).unwrap();
         serde_json::from_str(&res_body).unwrap()
     }
 
-    pub fn poll_for_broadcasts(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
+    pub fn poll_for_broadcasts(
+        &self,
+        party_num: u16,
+        n: u16,
+        round: &str,
+    ) -> Vec<String> {
         let mut ans_vec = Vec::new();
         for i in 1..=n {
             if i != party_num {
@@ -145,7 +133,12 @@ impl Channel {
         ans_vec
     }
 
-    pub fn poll_for_p2p(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
+    pub fn poll_for_p2p(
+        &self,
+        party_num: u16,
+        n: u16,
+        round: &str,
+    ) -> Vec<String> {
         let mut ans_vec = Vec::new();
         for i in 1..=n {
             if i != party_num {
@@ -172,15 +165,15 @@ impl Channel {
 
         let res_body: String = match self.postb("signupkeygen", key) {
             Some(res) => res,
-            None => return Err(Errors::Response),
+            None => return Err(Errors::Response)
         };
 
         match serde_json::from_str(&res_body) {
-            Ok(PartySignup { uuid, number }) => {
+            Ok(PartySignup { uuid, number } ) => {
                 self.uuid = uuid;
                 Ok(number)
-            }
-            Err(_) => Err(Errors::Deserialization),
+            },
+            Err(_) => Err(Errors::Deserialization)
         }
     }
 
@@ -189,15 +182,15 @@ impl Channel {
 
         let res_body: String = match self.postb("signupsign", key) {
             Some(res) => res,
-            None => return Err(Errors::Response),
+            None => return Err(Errors::Response)
         };
 
         match serde_json::from_str(&res_body) {
-            Ok(PartySignup { uuid, number }) => {
+            Ok(PartySignup { uuid, number } ) => {
                 self.uuid = uuid;
                 Ok(number)
-            }
-            Err(_) => Err(Errors::Deserialization),
+            },
+            Err(_) => Err(Errors::Deserialization)
         }
     }
 }
