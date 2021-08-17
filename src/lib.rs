@@ -1,5 +1,4 @@
 pub mod app;
-pub mod channel;
 pub mod config;
 pub mod git;
 pub mod pgp;

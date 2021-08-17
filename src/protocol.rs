@@ -72,12 +72,3 @@ pub fn extract<'a, T: Deserialize<'a>>(vals: &'a Vec< String>, size: usize) -> R
    Ok(results) 
 }
 
-impl From<Params> for Parameters {
-    fn from(item: Params) -> Self {
-        Parameters {
-            share_count: item.parties.parse::<u16>().unwrap(),
-            threshold: item.threshold.parse::<u16>().unwrap(),
-        }
-    }
-}
-

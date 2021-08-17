@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::comm::Channel;
 use crate::comm::PartyKeyPair;
 use crate::config as cfg;
 use crate::dkg;
@@ -11,7 +12,7 @@ use crate::git;
 use crate::pgp::*;
 use crate::signing;
 use crate::utils;
-use crate::utils::Config;
+use crate::utils::{Config, Operation};
 
 use curv::arithmetic::Converter;
 use curv::elliptic::curves::traits::*;
@@ -77,23 +78,50 @@ pub fn build_app() -> App<'static, 'static> {
     app
 }
 
+// TODO Move out all of the semantically important stuff and then surround everything with guards
+// that test the current pending operation
 pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Result<()> {
-    let public_key = dkg::distributed_keygen(&config).unwrap();
+    let mut channel = Channel::new(format!(
+        "http://{}:{}",
+        config.server.address, config.server.port
+    ));
+
+    let signing_time = utils::get_current_epoch()?;
+    
+    let keygen = utils::Operation::KeyGen {
+        max_participants: 4,
+        threshold: 2,
+        leader: config.user.as_ref().unwrap().username.clone(),
+        epoch: signing_time.as_secs(),
+    };
+
+    channel.start_operation(&keygen);
+    let op = channel.get_current_operation();
+    let (leader, epoch) = match op {
+        Operation::Idle => return Ok(()),
+        Operation::KeyGen{max_participants:_, threshold:_, leader, epoch } => {
+            (leader, epoch)
+        },
+        _ => unreachable!()
+    };
+
+    // TODO Pass info about the number of participants here
+    let public_key = dkg::distributed_keygen(&mut channel).unwrap();
+
+    channel.deregister();
+    channel.end_operation(&keygen);
 
     let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
     let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
 
     let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
 
-    let git_user = git::get_git_config("name");
-    let git_email = git::get_git_config("email");
-    let signing_time = utils::get_current_epoch()?;
-
+    // TODO All of a sudden, this became very ugly
     let mut message = Message::new();
     message.new_public_key(
         PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y),
-        git_user,
-        git_email,
+        config.user.as_ref().unwrap().username.clone(),
+        config.user.as_ref().unwrap().email.clone(),
         signing_time,
     );
 
@@ -101,7 +129,17 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
     let hashed = message.get_sha256_hash(None);
     let hashed = &hashed[hashed.len() - 2..];
 
-    let signature = signing::distributed_sign(&hashable, &config, public_key.clone()).unwrap();
+    let sign_key = Operation::SignKey {
+        max_participants: 4,
+        threshold: 2,
+        epoch,
+        leader
+    };
+
+    channel.start_operation(&sign_key); 
+    // TODO Distribute the keys after the entire thing is done -- have the server work as PGP
+    // keyserver?
+    let signature = signing::distributed_sign(&mut channel, &hashable, public_key.clone()).unwrap();
     let sig_data = encode_sig_data(signature);
     message.finalize_signature(hashed, sig_data);
 
@@ -141,6 +179,11 @@ pub fn tag_subcommand(config: Config, args: Option<&ArgMatches>) -> Result<()> {
         let signing_time = utils::get_current_epoch()?;
         let mut tag_string = git::create_tag_string(&hash, &tag, &message, signing_time)?;
 
+        let mut channel = Channel::new(format!(
+            "http://{}:{}",
+            config.server.address, config.server.port
+        ));
+
         // TODO Test this
         let mut message = Message::new();
         message.new_signature(signing_time);
@@ -148,7 +191,7 @@ pub fn tag_subcommand(config: Config, args: Option<&ArgMatches>) -> Result<()> {
         hashable.append(&mut message.get_hashable());
         let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
 
-        let signature = signing::distributed_sign(&hashable, &config, key).unwrap();
+        let signature = signing::distributed_sign(&mut channel, &hashable, key).unwrap();
         let sig_data = encode_sig_data(signature);
 
         let hash = &hash[hash.len() - 2..];

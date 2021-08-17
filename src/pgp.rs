@@ -308,6 +308,7 @@ impl<'a> Message<'a> {
         buffer
     }
 
+    // TODO I don't like the solution of having an optional header. Anything else that can be done?
     pub fn get_sha256_hash(&self, header: Option<Vec<u8>>) -> Vec<u8> {
         use curv::arithmetic::traits::Converter;
         use curv::cryptographic_primitives::hashing::hash_sha256::HSha256;

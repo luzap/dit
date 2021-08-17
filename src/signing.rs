@@ -1,4 +1,4 @@
-use crate::protocol::PartyKeyPair;
+use crate::comm::PartyKeyPair;
 use curv::arithmetic::Converter;
 use curv::{
     cryptographic_primitives::{hashing::hash_sha256::HSha256, hashing::traits::Hash},
@@ -14,38 +14,27 @@ use multi_party_ecdsa::utilities::mta::{MessageA, MessageB};
 
 use paillier::*;
 
-use crate::channel;
-
-use super::utils::{Config, Result};
+use crate::comm::Channel;
+// use crate::errors::Result;
 
 pub fn distributed_sign(
+    channel: &mut Channel, 
     message: &[u8],
-    config: &Config,
     keypair: PartyKeyPair,
-) -> Result<SignatureRecid> {
+) -> Result<SignatureRecid, ()> {
     let params = Parameters {
         threshold: 2,
         share_count: 4,
     };
 
-    let user = channel::User {
-        username: "Lukas Zapolskas".to_string(),
-        email: "lukas.zapolskas@gmail.com".to_string(),
-    };
-
-    let mut channel = channel::Channel::new(
-        user,
-        format!("http://{}:{}", config.server.address, config.server.port),
-    )?;
-
-    let party_num_int = channel.signup_sign()?;
+    let party_num_int = channel.signup_sign().unwrap();
 
     // round 0: collect signers IDs
     channel.broadcast(
         party_num_int,
         "round0",
-        serde_json::to_string(&keypair.party_num_int_s)?,
-    );
+        serde_json::to_string(&keypair.party_num_int_s).unwrap(),
+    ).unwrap();
 
     let round0_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round0");
 
@@ -56,7 +45,7 @@ pub fn distributed_sign(
         if i == party_num_int {
             signers_vec.push((keypair.party_num_int_s - 1) as usize);
         } else {
-            let signer_j: u16 = serde_json::from_str(&round0_ans_vec[j])?;
+            let signer_j: u16 = serde_json::from_str(&round0_ans_vec[j]).unwrap();
             signers_vec.push((signer_j - 1) as usize);
             j += 1;
         }
@@ -78,8 +67,8 @@ pub fn distributed_sign(
             res_stage1.bc1.clone(),
             res_stage1.m_a.0.clone(),
             res_stage1.sign_keys.g_w_i,
-        ))?,
-    );
+        )).unwrap(),
+    ).unwrap();
 
     let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round1");
 
@@ -138,8 +127,8 @@ pub fn distributed_sign(
                 party_num_int,
                 i,
                 "round2",
-                serde_json::to_string(&(c_b_messageb_gammai, c_b_messageb_wi))?,
-            );
+                serde_json::to_string(&(c_b_messageb_gammai, c_b_messageb_wi)).unwrap(),
+            ).unwrap();
 
             j += 1;
         }
@@ -192,8 +181,8 @@ pub fn distributed_sign(
     channel.broadcast(
         party_num_int,
         "round4",
-        serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i))?,
-    );
+        serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i)).unwrap(),
+    ).unwrap();
 
     let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round4");
 
@@ -206,7 +195,7 @@ pub fn distributed_sign(
             decom1_vec.push(res_stage1.decom1.clone());
         } else {
             let (decom_l, delta_l): (SignDecommitPhase1, FE) =
-                serde_json::from_str(&round4_ans_vec[j])?;
+                serde_json::from_str(&round4_ans_vec[j]).unwrap();
             delta_i_vec.push(delta_l);
             decom1_vec.push(decom_l);
             j += 1;
@@ -227,8 +216,8 @@ pub fn distributed_sign(
     channel.broadcast(
         party_num_int,
         "round5",
-        serde_json::to_string(&(res_stage5.R_dash, res_stage5.R))?,
-    );
+        serde_json::to_string(&(res_stage5.R_dash, res_stage5.R)).unwrap(),
+    ).unwrap();
 
     let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round5");
 
@@ -240,7 +229,7 @@ pub fn distributed_sign(
             R_vec.push(res_stage5.R);
             R_dash_vec.push(res_stage5.R_dash);
         } else {
-            let (R_dash, R): (GE, GE) = serde_json::from_str(&round5_ans_vec[j])?;
+            let (R_dash, R): (GE, GE) = serde_json::from_str(&round5_ans_vec[j]).unwrap();
             R_vec.push(R);
             R_dash_vec.push(R_dash);
             j += 1;
@@ -272,7 +261,7 @@ pub fn distributed_sign(
             party_num_int,
             "round6",
             serde_json::to_string(&res_stage6.local_sig).unwrap(),
-        );
+        ).unwrap();
 
     let round6_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round6");
 
@@ -282,7 +271,7 @@ pub fn distributed_sign(
         if i == party_num_int {
             local_sig_vec.push(res_stage6.local_sig.clone());
         } else {
-            let local_sig: LocalSignature = serde_json::from_str(&round6_ans_vec[j])?;
+            let local_sig: LocalSignature = serde_json::from_str(&round6_ans_vec[j]).unwrap();
             local_sig_vec.push(local_sig.clone());
             j += 1;
         }
@@ -301,5 +290,6 @@ pub fn distributed_sign(
         &message,
         &keypair.y_sum_s,
     );
+
     Ok(res_stage7.local_sig)
 }

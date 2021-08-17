@@ -15,13 +15,13 @@ pub struct Server {
 pub struct Config {
     pub project: String,
     pub server: Server,
-    pub user: Option<User>
+    pub user: Option<User>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct User {
     pub username: String,
-    pub email: String
+    pub email: String,
 }
 
 pub struct Tag {
@@ -29,22 +29,31 @@ pub struct Tag {
     pub timestamp: time::Duration,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, PartialOrd, Debug)]
 pub enum Operation {
     Idle,
     KeyGen {
         max_participants: u16,
         threshold: u16,
-        leader: u16,
+        leader: String,
         epoch: u64,
     },
-    Signing {
+    SignTag {
+        max_participants: u16,
+        threshold: u16,
         leader: String,
         epoch: u64,
         timezone: String,
         commit: String,
         hash: String,
     },
+    SignKey {
+        max_participants: u16,
+        threshold: u16,
+        leader: String,
+        epoch: u64
+    },
+
     Blame {},
 }
 
@@ -67,4 +76,3 @@ pub fn read_data_from_file<'a, T: DeserializeOwned>(path: &dyn AsRef<Path>) -> R
 
     Ok(serde_json::from_str(&file)?)
 }
-

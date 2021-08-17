@@ -3,43 +3,60 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use rocket::{get, post, routes, State};
+use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
-use uuid;
+use uuid::Uuid;
 
-mod channel;
-mod utils;
-use channel::*;
-use utils::Operation;
+use dit::comm::{Entry, Index, Key, PartySignup};
+use dit::utils::Operation;
+use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Parameters;
 
-// TODO The different handlers for both post and get are a bit of a hack and there's probably
-// better things to do here
-#[get("/get_operation", format = "json")]
-fn get_state(db: State<RwLock<HashMap<Key, String>>>) -> Json<Operation> {
-    let db = db.read().unwrap();
-    match db.get(OP_KEY) {
-        Some(current_state) => Json(serde_json::from_str(&current_state).unwrap()),
-        None => unreachable!(),
-    }
+#[post("/start-operation", format = "json", data = "<request>")]
+fn start_operation(db: State<RwLock<HashMap<Key, String>>>, request: Json<Operation>) {
+    let op = request.0;
+
+    let next_operation = {
+        let read_db = db.read().unwrap();
+        match serde_json::from_str(read_db.get("operation").unwrap()).unwrap() {
+            Operation::Idle => op,
+            other => other,
+        }
+    };
+    let mut write_db = db.write().unwrap();
+    write_db.insert(
+        "operation".to_string(),
+        serde_json::to_string(&next_operation).unwrap(),
+    );
 }
 
-#[post("/set_operation", format = "json", data = "<request>")]
-fn set_operation(db: State<RwLock<HashMap<Key, String>>>, request: Json<Operation>) {
+#[post("/get-operation", format = "json")]
+fn get_operation(db: State<RwLock<HashMap<Key, String>>>) -> Json<Operation> {
     let read_db = db.read().unwrap();
-    match read_db.get(OP_KEY) {
-        // Don't allow any circumvention of the blame operation
-        Some(val) => match serde_json::from_str(val).unwrap() {
-            Operation::Blame {} => return,
-            _ => {},
-        },
-        None => unreachable!()
-    };
+    let pending_operation: Operation =
+        serde_json::from_str(read_db.get("operation").unwrap()).unwrap();
 
-    let mut db = db.write().unwrap();
-    db.insert(
-        OP_KEY.to_string(),
-        serde_json::to_string(&request.0).unwrap(),
-    );
+    Json(pending_operation)
+}
+
+#[post("/end-operation", format = "json")]
+fn end_operation(db: State<RwLock<HashMap<Key, String>>>) {
+    let participants = db
+        .read()
+        .unwrap()
+        .get("participants")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    if participants > 0 {
+        let read_db = db.read().unwrap();
+        let op = read_db.get("operation").unwrap();
+        serde_json::from_str(&op).unwrap()
+    } else {
+        db.write().unwrap().insert(
+            "operation".to_string(),
+            serde_json::to_string(&Operation::Idle).unwrap(),
+        );
+    };
 }
 
 #[post("/get", format = "json", data = "<request>")]
@@ -47,15 +64,13 @@ fn get(
     db_mtx: State<RwLock<HashMap<Key, String>>>,
     request: Json<Index>,
 ) -> Json<Result<Entry, ()>> {
-
-
     let index: Index = request.0;
     let hm = db_mtx.read().unwrap();
     match hm.get(&index.key) {
         Some(v) => {
             let entry = Entry {
                 key: index.key,
-                value: v.to_string(),
+                value: v.clone().to_string(),
             };
             Json(Ok(entry))
         }
@@ -67,67 +82,120 @@ fn get(
 fn set(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) -> Json<Result<(), ()>> {
     let entry: Entry = request.0;
     let mut hm = db_mtx.write().unwrap();
-    hm.insert(entry.key, entry.value);
+    hm.insert(entry.key.clone(), entry.value.clone());
     Json(Ok(()))
 }
 
-#[post("/blame", format = "json", data = "<request>")]
-fn blame(_db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) {
-    println!("Request: {:?}", request.0);
-}
+#[post("/signupkeygen", format = "json")]
+fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+    // TODO Set this dynamically
+    let params = Parameters {
+        share_count: 4,
+        threshold: 2,
+    };
+    let parties = params.share_count;
 
-#[post("/register", format = "json", data = "<request>")]
-fn register(
-    users_db: State<RwLock<HashMap<String, UserData>>>,
-    request: Json<User>,
-)  {
-    let request = request.0;
-    let uuid = {
-        let read_db = users_db
-            .read()
-            .expect("Could not get a read lock on the user db");
+    let participants = db_mtx
+        .read()
+        .unwrap()
+        .get("participants")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let op_id = db_mtx.read().unwrap().get("sign-uuid").unwrap().clone();
 
-        match read_db.get(&request.username) {
-            // TODO Add some verification
-            Some(user_data) => user_data.uuid.clone(),
-            None => {
-                uuid::Uuid::new_v4().to_string()
-            }
-        }
+    let res = if participants < parties {
+        db_mtx
+            .write()
+            .unwrap()
+            .insert("participants".to_string(), format!("{}", participants + 1));
+
+        Ok(PartySignup {
+            number: participants + 1,
+            uuid: op_id,
+        })
+    } else {
+        Err(())
     };
 
-    users_db.write().expect("Could not get write lock").insert(
-        request.username.clone(),
-        UserData {
-            name: request.username,
-            email: request.email,
-            uuid,
-        },
-    );
+    Json(res)
 }
 
-struct UserData {
-    name: String,
-    email: String,
-    uuid: String,
+#[post("/signupsign", format = "json")]
+fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
+    // TODO Set this from the user side
+    let params = Parameters {
+        share_count: 4,
+        threshold: 2,
+    };
+
+    let threshold = params.threshold;
+    let participants = db_mtx
+        .read()
+        .unwrap()
+        .get("participants")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let op_id = db_mtx.read().unwrap().get("sign-uuid").unwrap().clone();
+
+    let res = if participants < threshold + 1 {
+        db_mtx
+            .write()
+            .unwrap()
+            .insert("participants".to_string(), format!("{}", participants + 1));
+        Ok(PartySignup {
+            number: participants + 1,
+            uuid: op_id,
+        })
+    } else {
+        Err(())
+    };
+
+    Json(res)
 }
 
-const OP_KEY: &str = "operation";
+#[post("/deregister")]
+fn deregister(db: State<RwLock<HashMap<Key, String>>>) {
+    let participants = db
+        .read()
+        .unwrap()
+        .get("participants")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    db.write()
+        .unwrap()
+        .insert("participants".to_string(), format!("{}", participants - 1));
+}
 
+// TODO How can we best express the server's data model?
 fn main() {
-    let mut data: HashMap<Key, String> = HashMap::new();
-    data.insert(
-        OP_KEY.to_string(),
+    let mut db: HashMap<Key, String> = HashMap::new();
+    db.insert("participants".to_string(), String::from("0"));
+    db.insert(
+        "operation".to_string(),
         serde_json::to_string(&Operation::Idle).unwrap(),
     );
+    db.insert("keygen-uuid".to_string(), Uuid::new_v4().to_string());
+    db.insert("sign-uuid".to_string(), Uuid::new_v4().to_string());
 
-    let data_db = RwLock::new(data);
-    let users: HashMap<String, UserData> = HashMap::new();
-    let users_db = RwLock::new(users);
+    let db_mtx = RwLock::new(db);
 
     rocket::ignite()
-        .mount("/", routes![get, set, blame, register])
-        .manage(data_db)
-        .manage(users_db)
+        .mount(
+            "/",
+            routes![
+                get,
+                set,
+                signup_keygen,
+                signup_sign,
+                start_operation,
+                end_operation,
+                get_operation,
+                deregister,
+            ],
+        )
+        .manage(db_mtx)
         .launch();
 }
