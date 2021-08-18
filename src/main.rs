@@ -18,7 +18,7 @@ fn main() {
             errors::unwrap_or_exit(app::tag_subcommand(config, tag_matches));
         }
         (other, args) => {
-            errors::unwrap_or_exit(app::git_subcommand(other, args));
+            errors::unwrap_or_exit(app::git_passthrough(other, args));
         }
     };
 }

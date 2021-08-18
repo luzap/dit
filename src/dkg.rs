@@ -1,6 +1,5 @@
-use crate::utils::Config;
-// use crate::errors::Result;
-use crate::comm::{PartyKeyPair, Channel};
+use crate::comm::{Channel, PartyKeyPair};
+use crate::errors::Result;
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
     keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4, KeyGenStage1Input,
@@ -16,15 +15,13 @@ use curv::elliptic::curves::secp256_k1::{FE, GE};
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
+pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKeyPair, ()> {
     // TODO Get rid of this
     let params = Parameters {
         threshold: 2,
         share_count: 4,
     };
-    
     let party_num_int = channel.signup_keygen().unwrap();
-
 
     let input_stage1 = KeyGenStage1Input {
         index: (party_num_int - 1) as usize,
@@ -32,11 +29,13 @@ pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
 
     let res_stage1 = keygen_stage1(&input_stage1);
 
-    channel.broadcast(
-        party_num_int,
-        "round1",
-        serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
-    ).unwrap();
+    channel
+        .broadcast(
+            party_num_int,
+            "round1",
+            serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
+        )
+        .unwrap();
 
     let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round1");
 
@@ -47,11 +46,13 @@ pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
 
     bc1_vec.insert(party_num_int as usize - 1, res_stage1.bc_com1_l);
 
-    channel.broadcast(
-        party_num_int,
-        "round2",
-        serde_json::to_string(&res_stage1.decom1_l).unwrap(),
-    ).unwrap();
+    channel
+        .broadcast(
+            party_num_int,
+            "round2",
+            serde_json::to_string(&res_stage1.decom1_l).unwrap(),
+        )
+        .unwrap();
 
     let round2_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round2");
 
@@ -83,12 +84,14 @@ pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
 
     for (k, i) in (1..=params.share_count).enumerate() {
         if i != party_num_int {
-            channel.sendp2p(
-                party_num_int,
-                i,
-                "round3",
-                serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
-            ).unwrap();
+            channel
+                .sendp2p(
+                    party_num_int,
+                    i,
+                    "round3",
+                    serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
+                )
+                .unwrap();
         }
     }
     // get shares from other parties.
@@ -106,11 +109,13 @@ pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
         }
     }
 
-    channel.broadcast(
-        party_num_int,
-        "round4",
-        serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
-    ).unwrap();
+    channel
+        .broadcast(
+            party_num_int,
+            "round4",
+            serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
+        )
+        .unwrap();
 
     //get vss_scheme for others.
     let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round4");
@@ -136,11 +141,13 @@ pub fn distributed_keygen(channel: &mut Channel) -> Result<PartyKeyPair, ()> {
     };
     let res_stage3 = keygen_stage3(&input_stage3).expect("stage 3 keygen failed.");
     // round 5: send dlog proof
-    channel.broadcast(
-        party_num_int,
-        "round5",
-        serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
-    ).unwrap();
+    channel
+        .broadcast(
+            party_num_int,
+            "round5",
+            serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
+        )
+        .unwrap();
 
     let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round5");
 

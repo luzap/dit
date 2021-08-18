@@ -1,32 +1,48 @@
-
 use std::convert::From;
-use std::error;
+use std::error::Error;
 use std::fmt;
 use std::io;
 use std::string;
 use std::time;
 
 #[derive(Debug)]
-pub struct CommandError(String);
+pub struct CommandError {
+    command: String,
+    error: String,
+}
 
-impl From<String> for CommandError {
-    fn from(error: string::String) -> Self {
-        CommandError(error)
+impl CommandError {
+    pub fn new(command: String, error: String) -> CommandError { 
+        CommandError {
+            command,
+            error
+        }
     }
 }
+
 
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "[Command] `{}` failed with message {}", self.command, self.error)
     }
 }
 
-// TODO Are these implementations necessary?
-impl error::Error for CommandError {}
+impl Error for CommandError {
+    
+    fn description(&self) -> &str {
+        &self.error
+    }
+
+    // TODO Not entirely sure what information we can provide here
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+
+}
 
 #[derive(Debug)]
 pub enum UserError {
-    TagMessage,
+    TagMessage
 }
 
 impl fmt::Display for UserError {
@@ -37,7 +53,7 @@ impl fmt::Display for UserError {
     }
 }
 
-impl error::Error for UserError {}
+impl Error for UserError {}
 
 #[derive(Debug)]
 pub enum CriticalError {
@@ -56,28 +72,32 @@ pub type Result<T> = std::result::Result<T, CriticalError>;
 impl fmt::Display for CriticalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CriticalError::FileSystem(err) => {
+            CriticalError::FileSystem(ref err) => {
+                // TODO Is there anything else that can be done here?
+                let error_kind = err.kind();
 
-                write!(f, "[File System]:\t{:?}",  err)
+                write!(f, "[File System]:\t{:?}, {}", error_kind, err)
             },
+            // TODO Right now, this error does not actually exist
             CriticalError::Network => write!(f, "[{:10?}]", self),
-            CriticalError::JSON(err) => {
+            CriticalError::JSON(ref err) => {
                 // TODO The error context contains an `ErrorCode` enum which is *a lot* more
                 // descriptive than this, and yet it does not seem to be exposed. Is there
                 // anything we can do to get better error messages?
+                // Furthermore, would it be possible to get the underlying problematic data
                 let error_context = format!(
                     "{:?} error: line {}, col {}",
                     err.classify(),
                     err.line(),
                     err.column()
                 );
-                write!(f, "[{:10?}]\t{}", self, error_context)
+                write!(f, "[JSON]\t{}", error_context)
             }
-            CriticalError::HTTP(err) => write!(f, "[{:10?}]\t{}", self, err.get_ref().unwrap()),
-            CriticalError::Encoding(err) => write!(f, "[{:10?}]\t{}", self, err),
-            CriticalError::Command(err) => write!(f, "[{:10?}]\t{}", self, err),
-            CriticalError::User(err) => write!(f, "[{:10?}]\t{}", self, err),
-            CriticalError::Clock(err) => write!(f, "[{:10?}]\t{}", self, err),
+            CriticalError::HTTP(ref err) => write!(f, "[HTTP]\t{}", err.get_ref().unwrap()),
+            CriticalError::Encoding(ref err) => write!(f, "[Encoding]\t{}",  err),
+            CriticalError::Command(ref err) => write!(f, "[Command]\t{}", err),
+            CriticalError::User(ref err) => write!(f, "[User]\t{}", err),
+            CriticalError::Clock(ref err) => write!(f, "[Clock]\t{}", err),
         }
     }
 }
@@ -112,9 +132,15 @@ impl From<time::SystemTimeError> for CriticalError {
     }
 }
 
+impl From<CommandError> for CriticalError {
+    fn from(command_error: CommandError) -> Self {
+        CriticalError::Command(command_error)
+    }
+}
+
 // TODO What does this do, exactly?
-impl error::Error for CriticalError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+impl Error for CriticalError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match *self {
             CriticalError::FileSystem(ref err) => Some(err),
             CriticalError::Network => None,
@@ -132,7 +158,7 @@ pub fn unwrap_or_exit<T>(wrapped: Result<T>) -> T {
     match wrapped {
         Ok(val) => val,
         Err(e) => {
-            println!("{}", e);
+            eprintln!("{}", e);
             std::process::exit(1);
         }
     }

@@ -1,7 +1,6 @@
 use clap::{crate_version, App, AppSettings, Arg, ArgMatches};
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use crate::comm::Channel;
 use crate::comm::PartyKeyPair;
@@ -16,8 +15,6 @@ use crate::utils::{Config, Operation};
 
 use curv::arithmetic::Converter;
 use curv::elliptic::curves::traits::*;
-
-const GIT: &str = "git";
 
 pub fn build_app() -> App<'static, 'static> {
     let app = App::new("dit")
@@ -87,7 +84,6 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
     ));
 
     let signing_time = utils::get_current_epoch()?;
-    
     let keygen = utils::Operation::KeyGen {
         max_participants: 4,
         threshold: 2,
@@ -99,22 +95,26 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
     let op = channel.get_current_operation();
     let (leader, epoch) = match op {
         Operation::Idle => return Ok(()),
-        Operation::KeyGen{max_participants:_, threshold:_, leader, epoch } => {
-            (leader, epoch)
-        },
-        _ => unreachable!()
+        Operation::KeyGen {
+            max_participants: _,
+            threshold: _,
+            leader,
+            epoch,
+        } => (leader, epoch),
+        _ => unreachable!(),
     };
 
     // TODO Pass info about the number of participants here
-    let public_key = dkg::distributed_keygen(&mut channel).unwrap();
+    let keypair = dkg::distributed_keygen(&mut channel).unwrap();
 
     channel.deregister();
     channel.end_operation(&keygen);
 
-    let x = public_key.y_sum_s.x_coor().unwrap().to_bytes();
-    let y = public_key.y_sum_s.y_coor().unwrap().to_bytes();
+    let x = keypair.y_sum_s.x_coor().unwrap().to_bytes();
+    let y = keypair.y_sum_s.y_coor().unwrap().to_bytes();
 
     let key_file = args.unwrap().value_of("keyfile").unwrap_or("keyfile.pgp");
+    let file_path = Path::join(&cfg::KEY_DIR.clone(), &key_file);
 
     // TODO All of a sudden, this became very ugly
     let mut message = Message::new();
@@ -133,17 +133,18 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
         max_participants: 4,
         threshold: 2,
         epoch,
-        leader
+        leader,
     };
 
-    channel.start_operation(&sign_key); 
+    // TODO Move this outside of the function -- creates too much coupling
+    channel.start_operation(&sign_key);
     // TODO Distribute the keys after the entire thing is done -- have the server work as PGP
     // keyserver?
-    let signature = signing::distributed_sign(&mut channel, &hashable, public_key.clone()).unwrap();
+    let signature = signing::distributed_sign(&mut channel, &hashable, keypair.clone()).unwrap();
     let sig_data = encode_sig_data(signature);
     message.finalize_signature(hashed, sig_data);
 
-    message.write_to_file(&cfg::KEY_DIR.clone(), &key_file)?;
+    message.write_to_file(file_path)?;
     fs::write(
         Path::join(
             &cfg::KEY_DIR.clone(),
@@ -151,7 +152,7 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
                 .value_of("pubkey")
                 .unwrap_or("public_key.json"),
         ),
-        serde_json::to_string(&public_key)?,
+        serde_json::to_string(&keypair)?,
     )?;
 
     Ok(())
@@ -207,23 +208,30 @@ pub fn tag_subcommand(config: Config, args: Option<&ArgMatches>) -> Result<()> {
     Ok(())
 }
 
-pub fn git_subcommand(subcommand: &str, args: Option<&ArgMatches>) -> Result<()> {
-    let mut git_child = Command::new(GIT);
-    let mut git_owning = git_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());
-
-    if subcommand.is_empty() {
-        git_owning = git_owning.arg("--help");
-    } else {
-        git_owning = git_owning.arg(subcommand);
-    }
-
+/// # Warning
+/// `OsString` does not always contain valid Unicode, and the conversion to Rust strings
+/// may fail. Right now, if any of the command-line flags passed to the executable
+/// are not legitimate, we will simply remove them. 
+pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()> {
+    // This will not work
+    let mut argv: Vec<&str> = Vec::new();
     if let Some(args) = args {
-        if !args.args.is_empty() {
-            let passthrough_args = &args.args[""].vals;
-            git_owning = git_owning.args(passthrough_args);
-        }
+        let mut args: Vec<&str> = args.args[""].vals.iter().map(|e| {
+                e.as_os_str()
+                    .to_str()
+            }).flatten()
+            .filter(|e| e.len() != 0)
+            .collect();
+        argv.append(&mut args);
     }
-    git_owning.spawn()?.wait()?;
+    if argv.len() == 0 {
+        argv.push("--help");
+    }
+
+    git::git_owning_subcommand(subcommand, &argv)?;
 
     Ok(())
 }
+
+// TODO Extract operation checking logic, which allows for the decoupling of the "leader" and
+// "follower" logic

@@ -4,7 +4,7 @@ use std::ops::Index;
 use std::time::{Duration, SystemTime};
 
 use std::fs;
-use std::path::{PathBuf, Path};
+use std::path::{Path};
 
 // TODO What does the Recid mean?
 pub fn encode_sig_data(sig: SignatureRecid) -> SignatureData {
@@ -260,11 +260,8 @@ impl<'a> Message<'a> {
 
         self.packets.push(Packet::PublicKey(public_key_packet));
         self.packets.push(Packet::UserID(UserID { user, email }));
-        let mut partial = PartialSignature::new(
-            SigType::PositiveIDPKCert,
-            PublicKeyAlgorithm::ECDSA,
-            time,
-        );
+        let mut partial =
+            PartialSignature::new(SigType::PositiveIDPKCert, PublicKeyAlgorithm::ECDSA, time);
         // Both the subpackets and their order have been derived from a GnuPG created key
         // in order to conform as much as possible with any undocumented implementation
         // assumptions that we may or may not run into
@@ -324,17 +321,14 @@ impl<'a> Message<'a> {
     }
 
     pub fn get_sha160_hash(&self, header: Option<Vec<u8>>) -> Vec<u8> {
-        let mut hashable = self.get_hashable(); 
+        let mut hashable = self.get_hashable();
         if let Some(header) = header {
             hashable.extend(header);
         }
-    
         sha160_hash(&hashable)
     }
 
-    pub fn write_to_file(&self, path: &dyn AsRef<Path>, filename: &dyn AsRef<Path>) -> errors::Result<()> {
-        let file_path: PathBuf = [path.as_ref(), filename.as_ref()].iter().collect();
-
+    pub fn write_to_file<P: AsRef<Path>>(&self, file_path: P) -> errors::Result<()> {
         Ok(fs::write(file_path, self.get_formatted_message())?)
     }
 
@@ -691,11 +685,7 @@ struct PartialSignature {
 }
 
 impl PartialSignature {
-    fn new(
-        sigtype: SigType,
-        pubkey_algo: PublicKeyAlgorithm,
-        time: Duration,
-    ) -> PartialSignature {
+    fn new(sigtype: SigType, pubkey_algo: PublicKeyAlgorithm, time: Duration) -> PartialSignature {
         // TODO Move to a separate function
 
         let mut partial_signature = PartialSignature {

@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::errors::{unwrap_or_exit, CriticalError, Result, UserError};
+use crate::errors::{unwrap_or_exit, CommandError, CriticalError, Result, UserError};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
+const GIT: &str = "git";
 const TAG_MSG: &'static str = "
 # Write a message for tag:
 #   {}
@@ -14,7 +15,6 @@ const TAG_MSG: &'static str = "
 # Note that this is a tag signed with a threshold signature
 # and might take some time to show up.";
 
-// TODO Time to rewrite this another time
 lazy_static! {
     pub static ref GIT_CONFIG: HashMap<String, String> = unwrap_or_exit(get_git_vars());
     pub static ref GIT_DIR: PathBuf = PathBuf::from(unwrap_or_exit(get_repo_root()));
@@ -25,7 +25,7 @@ lazy_static! {
 
 fn get_git_vars() -> Result<HashMap<String, String>> {
     let mut cfg = HashMap::new();
-    let config = parse_cmd_output(&Command::new("git").args(&["config", "-l"]).output()?.stdout)?;
+    let config = parse_cmd_output(&Command::new(GIT).args(&["config", "-l"]).output()?.stdout)?;
 
     for line in config.lines() {
         let split = line.split("=").collect::<Vec<&str>>();
@@ -48,7 +48,7 @@ fn parse_cmd_output(piped_output: &[u8]) -> Result<String> {
 }
 
 pub fn get_repo_root() -> Result<String> {
-    let repo_root = Command::new("git")
+    let repo_root = Command::new(GIT)
         .args(&["rev-parse", "--show-toplevel"])
         .output()?;
 
@@ -56,14 +56,18 @@ pub fn get_repo_root() -> Result<String> {
 }
 
 pub fn get_commit_hash(commit: &str) -> Result<String> {
-    let commit = Command::new("git").args(&["rev-parse", commit]).output()?;
+    let mut commit_cmd = Command::new(GIT);
+    commit_cmd.args(&["rev-parse", commit]);
+
+    let commit = commit_cmd.output()?;
 
     if !commit.stdout.is_empty() {
         parse_cmd_output(&commit.stdout)
     } else {
-        Err(CriticalError::Command(
-            parse_cmd_output(&commit.stderr)?.into(),
-        ))
+        let command = format!("{:?}", commit_cmd);
+        let error = parse_cmd_output(&commit.stderr)?;
+
+        Err(CommandError::new(command, error).into())
     }
 }
 
@@ -85,9 +89,8 @@ fn get_current_timezone() -> Result<String> {
 
 pub fn get_git_tag_message(tag: &str) -> Result<String> {
     let mut editor_child = Command::new(get_git_config("editor"));
-    let editor_child = editor_child.arg(TAG_MSG_FILE.clone().into_os_string());
-
-    let editor_child = editor_child
+    editor_child
+        .arg(TAG_MSG_FILE.clone().into_os_string())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit());
 
@@ -113,7 +116,6 @@ pub fn get_git_tag_message(tag: &str) -> Result<String> {
     };
 
     fs::remove_file(TAG_MSG_FILE.as_path())?;
-
 
     Ok(output
         .lines()
@@ -150,9 +152,9 @@ pub fn create_tag_string(
 /// echo -e "object $(git rev-parse HEAD~1)\ntype commit\ntag 0.1\ntagger Lukas Zapolskas <lukas.zapolskas@gmail.com> $(date +%s) +0100\n\nDoing a test tag" > temp.txt && gpg -bsa -o- temp.txt >> temp.txt && git hash-object -w -t tag temp.txt > .git/refs/tags/0.1
 /// ```
 pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
-    let hash = Command::new("git")
-        .args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body])
-        .output()?;
+    let mut hash_cmd = Command::new(GIT);
+    hash_cmd.args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body]);
+    let hash = hash_cmd.output()?;
 
     if !hash.stdout.is_empty() {
         let hash_string = parse_cmd_output(&hash.stdout)?;
@@ -163,9 +165,29 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
         fs::write(tag_pointer, hash_string)?;
         Ok(())
     } else {
-        // TODO Make this a little better
-        Err(CriticalError::Command(
-            parse_cmd_output(&hash.stderr)?.into(),
-        ))
+        let command = format!("{:?}", hash_cmd);
+        let error = parse_cmd_output(&hash.stderr)?;
+
+        Err(CommandError::new(command, error).into())
     }
+}
+
+pub fn git_owning_subcommand(subcommand: &str, args: &[&str]) -> Result<()> {
+    let mut git_child = Command::new(GIT);
+    git_child
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit());
+
+    // It's either this or handle possible empty subcommand at every call-site
+    if subcommand.len() > 0 {
+        git_child.arg(subcommand);
+    }
+
+    if args.len() > 0 {
+        git_child.args(args);
+    }
+
+    git_child.spawn()?.wait()?;
+
+    Ok(())
 }

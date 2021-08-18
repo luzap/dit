@@ -53,7 +53,6 @@ pub enum Operation {
         leader: String,
         epoch: u64
     },
-
     Blame {},
 }
 
