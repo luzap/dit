@@ -1,3 +1,8 @@
+// TODO Message struct
+// TODO Make sure every struct we're using can be hashed (implements AsRef<[u8]> to pass to the
+// hash crate directly)
+// TODO Make a new file for crypto helper methods
+
 use serde::{Deserialize, Serialize};
 use std::{thread, time};
 

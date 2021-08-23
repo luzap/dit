@@ -1,61 +1,89 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{atomic::AtomicUsize, Arc, RwLock};
 
 use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
 use uuid::Uuid;
 
+// TODO Move these to a separate crate
 use dit::comm::{Entry, Index, Key, PartySignup};
 use dit::utils::Operation;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Parameters;
 
-#[post("/start-operation", format = "json", data = "<request>")]
-fn start_operation(db: State<RwLock<HashMap<Key, String>>>, request: Json<Operation>) {
-    let op = request.0;
+// TODO Now we need to send the project name with every message
+// TODO Start doing error checks on the locks
+// TODO Start handling server errors
 
-    let next_operation = {
+#[post("/start-operation", format = "json", data = "<request>")]
+fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Operation>) {
+    // TODO Remove this
+    let project_name = "project".to_owned();
+
+    let (operation, exists) = {
         let read_db = db.read().unwrap();
-        match serde_json::from_str(read_db.get("operation").unwrap()).unwrap() {
-            Operation::Idle => op,
-            other => other,
+        match read_db.get(&project_name) {
+            Some(project) => ((*project).operation.clone(), true),
+            None => (Arc::new(Operation::Idle), false),
         }
     };
-    let mut write_db = db.write().unwrap();
-    write_db.insert(
-        "operation".to_string(),
-        serde_json::to_string(&next_operation).unwrap(),
-    );
+
+    // We don't want to handle interrupted operations at this point
+    let new_operation = request.0;
+
+    let new_operation = match *operation {
+        Operation::Idle => Arc::new(new_operation),
+        _ => operation,
+    };
+
+    if exists != true {
+        let mut write_db = db.write().unwrap();
+        write_db.insert(
+            project_name.clone(),
+            Project {
+                name: project_name,
+                operation: new_operation,
+                active_participants: Arc::new(AtomicUsize::new(0)),
+                keygen_identifier: Uuid::new_v4().to_string(),
+                sign_identifier: Uuid::new_v4().to_string(),
+                cache: RwLock::new(HashMap::new()),
+            },
+        );
+    } else {
+        let mut write_db = db.write().unwrap();
+        match write_db.get_mut(&project_name) {
+            Some(project) => project.operation = new_operation,
+            None => unreachable!(),
+        }
+    };
 }
 
 #[post("/get-operation", format = "json")]
-fn get_operation(db: State<RwLock<HashMap<Key, String>>>) -> Json<Operation> {
+fn get_operation(db: State<RwLock<HashMap<String, Project>>>) -> Json<Operation> {
+    let project_name = "project".to_owned();
+
     let read_db = db.read().unwrap();
-    let pending_operation: Operation =
-        serde_json::from_str(read_db.get("operation").unwrap()).unwrap();
+    let pending_operation: Operation = (*read_db.get(&project_name).unwrap().operation).clone();
 
     Json(pending_operation)
 }
 
 #[post("/end-operation", format = "json")]
-fn end_operation(db: State<RwLock<HashMap<Key, String>>>) {
+fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
+    let project_name = "project".to_owned();
+
     let participants = db
         .read()
         .unwrap()
-        .get("participants")
+        .get(&project_name)
         .unwrap()
-        .parse::<u16>()
-        .unwrap();
-    if participants > 0 {
-        let read_db = db.read().unwrap();
-        let op = read_db.get("operation").unwrap();
-        serde_json::from_str(&op).unwrap()
-    } else {
-        db.write().unwrap().insert(
-            "operation".to_string(),
-            serde_json::to_string(&Operation::Idle).unwrap(),
-        );
+        .active_participants.clone();
+
+    // TODO How do we make this work, again?
+    if (*participants).into_inner() < 0 {
+        db.write().unwrap().get_mut(&project_name).unwrap().
+            operation = Arc::new(Operation::Idle);
     };
 }
 
@@ -96,6 +124,7 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<Par
     let parties = params.share_count;
 
     let participants = db_mtx
+
         .read()
         .unwrap()
         .get("participants")
@@ -169,19 +198,20 @@ fn deregister(db: State<RwLock<HashMap<Key, String>>>) {
         .insert("participants".to_string(), format!("{}", participants - 1));
 }
 
-// TODO How can we best express the server's data model?
+struct Project {
+    name: String,
+    operation: Arc<Operation>,
+    active_participants: Arc<AtomicUsize>,
+    keygen_identifier: String,
+    sign_identifier: String,
+    cache: RwLock<HashMap<Key, String>>,
+}
+
 fn main() {
-    let mut db: HashMap<Key, String> = HashMap::new();
-    db.insert("participants".to_string(), String::from("0"));
-    db.insert(
-        "operation".to_string(),
-        serde_json::to_string(&Operation::Idle).unwrap(),
-    );
-    db.insert("keygen-uuid".to_string(), Uuid::new_v4().to_string());
-    db.insert("sign-uuid".to_string(), Uuid::new_v4().to_string());
+    let projects: HashMap<String, Project> = HashMap::with_capacity(1);
+    let db_mtx = RwLock::new(projects);
 
-    let db_mtx = RwLock::new(db);
-
+    // TODO Add logging and TLS
     rocket::ignite()
         .mount(
             "/",

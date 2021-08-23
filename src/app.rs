@@ -85,8 +85,7 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
 
     let signing_time = utils::get_current_epoch()?;
     let keygen = utils::Operation::KeyGen {
-        max_participants: 4,
-        threshold: 2,
+        participants: 4,
         leader: config.user.as_ref().unwrap().username.clone(),
         epoch: signing_time.as_secs(),
     };
@@ -96,8 +95,7 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
     let (leader, epoch) = match op {
         Operation::Idle => return Ok(()),
         Operation::KeyGen {
-            max_participants: _,
-            threshold: _,
+            participants: _,
             leader,
             epoch,
         } => (leader, epoch),
@@ -130,7 +128,7 @@ pub fn keygen_subcommand(config: Config, args: Option<&ArgMatches<'_>>) -> Resul
     let hashed = &hashed[hashed.len() - 2..];
 
     let sign_key = Operation::SignKey {
-        max_participants: 4,
+        participants: 4,
         threshold: 2,
         epoch,
         leader,
