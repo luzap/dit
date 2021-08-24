@@ -1,5 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::time;
 
@@ -68,4 +69,25 @@ pub fn read_data_from_file<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Resu
     let file = fs::read_to_string(path)?;
 
     Ok(serde_json::from_str(&file)?)
+}
+
+// TODO This could be done better
+pub fn get_user_choice(prompt: &str, choices: &[&str]) -> Result<usize> {
+    let mut input = String::with_capacity(choices[0].len());
+    loop {
+        print!("{} [{}]:", prompt, choices.join("/"));
+        // TODO This will fail if the user inputs invalid Unicode, but do we really care?
+        let len = io::stdin().read_line(&mut input)?;
+
+        if len == 0 {
+            return Ok(0);
+        };
+
+        // There has to be a better syntactic construct for this sort of stuff
+        if choices.contains(&&*input) {
+            return Ok(choices.iter().position(|&e| e == input).unwrap())
+        } else {
+            continue
+        }
+    }
 }

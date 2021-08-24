@@ -199,9 +199,4 @@ impl Channel {
             panic!("Couldn't register!");
         }
     }
-
-    pub fn deregister(&self) {
-        self.postb("deregister", 0);
-    }
-
 }

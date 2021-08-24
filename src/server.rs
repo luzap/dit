@@ -1,7 +1,8 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
 use std::collections::HashMap;
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 
 use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
@@ -10,7 +11,6 @@ use uuid::Uuid;
 // TODO Move these to a separate crate
 use dit::comm::{Entry, Index, Key, PartySignup};
 use dit::utils::Operation;
-use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::Parameters;
 
 // TODO Now we need to send the project name with every message
 // TODO Start doing error checks on the locks
@@ -44,7 +44,7 @@ fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Op
             Project {
                 name: project_name,
                 operation: new_operation,
-                active_participants: Arc::new(AtomicUsize::new(0)),
+                participants: AtomicUsize::new(0),
                 keygen_identifier: Uuid::new_v4().to_string(),
                 sign_identifier: Uuid::new_v4().to_string(),
                 cache: RwLock::new(HashMap::new()),
@@ -64,37 +64,44 @@ fn get_operation(db: State<RwLock<HashMap<String, Project>>>) -> Json<Operation>
     let project_name = "project".to_owned();
 
     let read_db = db.read().unwrap();
-    let pending_operation: Operation = (*read_db.get(&project_name).unwrap().operation).clone();
 
-    Json(pending_operation)
+    // TODO How should we handle the case of the missing operation?
+    // Probably want more error states here
+    let operation = match read_db.get(&project_name) {
+        Some(op) => (*op.operation).clone(),
+        None => Operation::Idle,
+    };
+
+    Json(operation)
 }
 
+// TODO Maybe we should be checking how many participants there are?
+// Figure out how to best share that state between threads
 #[post("/end-operation", format = "json")]
 fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
     let project_name = "project".to_owned();
 
-    let participants = db
-        .read()
+    db.write()
         .unwrap()
-        .get(&project_name)
+        .get_mut(&project_name)
         .unwrap()
-        .active_participants.clone();
-
-    // TODO How do we make this work, again?
-    if (*participants).into_inner() < 0 {
-        db.write().unwrap().get_mut(&project_name).unwrap().
-            operation = Arc::new(Operation::Idle);
-    };
+        .operation = Arc::new(Operation::Idle);
 }
 
 #[post("/get", format = "json", data = "<request>")]
 fn get(
-    db_mtx: State<RwLock<HashMap<Key, String>>>,
+    db_mtx: State<RwLock<HashMap<String, Project>>>,
     request: Json<Index>,
 ) -> Json<Result<Entry, ()>> {
+    let project_name = "project".to_owned();
     let index: Index = request.0;
+    // TODO I don't like holding the lock for so long but it seems necessary
     let hm = db_mtx.read().unwrap();
-    match hm.get(&index.key) {
+    let project = hm.get(&project_name).unwrap();
+
+    let read_db = project.cache.read().unwrap();
+
+    match read_db.get(&index.key) {
         Some(v) => {
             let entry = Entry {
                 key: index.key,
@@ -107,41 +114,44 @@ fn get(
 }
 
 #[post("/set", format = "json", data = "<request>")]
-fn set(db_mtx: State<RwLock<HashMap<Key, String>>>, request: Json<Entry>) -> Json<Result<(), ()>> {
+fn set(
+    db_mtx: State<RwLock<HashMap<String, Project>>>,
+    request: Json<Entry>,
+) -> Json<Result<(), ()>> {
+    let project_name = "project".to_owned();
+
     let entry: Entry = request.0;
-    let mut hm = db_mtx.write().unwrap();
-    hm.insert(entry.key.clone(), entry.value.clone());
+    let hm = db_mtx.write().unwrap();
+    let project = hm.get(&project_name).unwrap();
+    let mut project_cache = project.cache.write().unwrap();
+
+    project_cache.insert(entry.key.clone(), entry.value.clone());
     Json(Ok(()))
 }
 
 #[post("/signupkeygen", format = "json")]
-fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
-    // TODO Set this dynamically
-    let params = Parameters {
-        share_count: 4,
-        threshold: 2,
-    };
-    let parties = params.share_count;
+fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<PartySignup, ()>> {
+    // TODO Need the
+    let project_name = "project".to_owned();
 
-    let participants = db_mtx
+    let hm = db_mtx.read().unwrap();
+    let project = hm.get(&project_name).unwrap();
 
-        .read()
-        .unwrap()
-        .get("participants")
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
-    let op_id = db_mtx.read().unwrap().get("sign-uuid").unwrap().clone();
+    let op = &project.operation;
+    let parties = match **op {
+        Operation::KeyGen { participants, .. } => participants,
+        _ => return Json(Err(())),
+    } as usize;
+    let participants = &project.participants;
 
-    let res = if participants < parties {
-        db_mtx
-            .write()
-            .unwrap()
-            .insert("participants".to_string(), format!("{}", participants + 1));
+    let uuid = &project.keygen_identifier;
+
+    let res = if participants.load(Ordering::SeqCst) < parties {
+        let index = participants.fetch_add(1, Ordering::SeqCst);
 
         Ok(PartySignup {
-            number: participants + 1,
-            uuid: op_id,
+            number: index as u16,
+            uuid: uuid.clone(),
         })
     } else {
         Err(())
@@ -151,31 +161,38 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<Par
 }
 
 #[post("/signupsign", format = "json")]
-fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<PartySignup, ()>> {
-    // TODO Set this from the user side
-    let params = Parameters {
-        share_count: 4,
-        threshold: 2,
-    };
+fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<PartySignup, ()>> {
+    let project_name = "project".to_owned();
 
-    let threshold = params.threshold;
-    let participants = db_mtx
-        .read()
-        .unwrap()
-        .get("participants")
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
-    let op_id = db_mtx.read().unwrap().get("sign-uuid").unwrap().clone();
+    let hm = db_mtx.read().unwrap();
 
-    let res = if participants < threshold + 1 {
-        db_mtx
-            .write()
-            .unwrap()
-            .insert("participants".to_string(), format!("{}", participants + 1));
+    let project = hm.get(&project_name).unwrap();
+
+    let op = &project.operation;
+    let threshold = match **op {
+        Operation::SignTag {
+            participants: _,
+            threshold,
+            ..
+        } => threshold,
+        Operation::SignKey {
+            participants: _,
+            threshold,
+            ..
+        } => threshold,
+        _ => return Json(Err(())),
+    } as usize;
+
+    let participants = &project.participants;
+
+    let uuid = &project.sign_identifier;
+
+    let res = if participants.load(Ordering::SeqCst) < threshold + 1 {
+        let index = participants.fetch_add(1, Ordering::SeqCst);
+
         Ok(PartySignup {
-            number: participants + 1,
-            uuid: op_id,
+            number: index as u16,
+            uuid: uuid.clone(),
         })
     } else {
         Err(())
@@ -184,24 +201,10 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<Key, String>>>) -> Json<Result<Party
     Json(res)
 }
 
-#[post("/deregister")]
-fn deregister(db: State<RwLock<HashMap<Key, String>>>) {
-    let participants = db
-        .read()
-        .unwrap()
-        .get("participants")
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
-    db.write()
-        .unwrap()
-        .insert("participants".to_string(), format!("{}", participants - 1));
-}
-
 struct Project {
     name: String,
     operation: Arc<Operation>,
-    active_participants: Arc<AtomicUsize>,
+    participants: AtomicUsize,
     keygen_identifier: String,
     sign_identifier: String,
     cache: RwLock<HashMap<Key, String>>,
@@ -223,7 +226,6 @@ fn main() {
                 start_operation,
                 end_operation,
                 get_operation,
-                deregister,
             ],
         )
         .manage(db_mtx)
