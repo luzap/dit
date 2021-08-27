@@ -1,6 +1,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::Path;
 use std::time;
 
@@ -31,21 +32,23 @@ pub enum Operation {
     KeyGen {
         participants: u16,
         leader: String,
+        email: String,
         epoch: u64,
     },
     SignTag {
         participants: u16,
         threshold: u16,
         leader: String,
+        email: String,
         epoch: u64,
         timezone: String,
         commit: String,
-        hash: String,
     },
     SignKey {
         participants: u16,
         threshold: u16,
         leader: String,
+        email: String,
         epoch: u64,
     },
     Blame {},
@@ -71,23 +74,30 @@ pub fn read_data_from_file<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Resu
     Ok(serde_json::from_str(&file)?)
 }
 
-// TODO This could be done better
 pub fn get_user_choice(prompt: &str, choices: &[&str]) -> Result<usize> {
+    if choices.len() < 2 {
+        unimplemented!()
+    }
     let mut input = String::with_capacity(choices[0].len());
+    // Indicating that the default choice is the first one 
+    let default_choice = format!("{}/{}", choices[0], choices[1..].join("/"));
+
     loop {
-        print!("{} [{}]:", prompt, choices.join("/"));
-        // TODO This will fail if the user inputs invalid Unicode, but do we really care?
-        let len = io::stdin().read_line(&mut input)?;
+        input.clear();
+        print!("{} [{}]: ", prompt, default_choice);
+        io::stdout().flush()?;
+        // Note that this includes the newline delimiter as the final character, so we're going to
+        // ignore it
+        let len = io::stdin().read_line(&mut input)? - 1;
 
         if len == 0 {
             return Ok(0);
         };
 
-        // There has to be a better syntactic construct for this sort of stuff
-        if choices.contains(&&*input) {
-            return Ok(choices.iter().position(|&e| e == input).unwrap())
-        } else {
-            continue
+        let input = &input[..len];
+
+        if choices.contains(&input) {
+            return Ok(choices.iter().position(|e| e == &input).unwrap());
         }
     }
 }

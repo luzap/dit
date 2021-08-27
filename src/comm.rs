@@ -60,7 +60,7 @@ impl Channel {
             retries: 3,
             uuid: "".to_string(),
             address: String::from(server),
-            retry_delay: time::Duration::from_millis(250),
+            retry_delay: time::Duration::from_secs(5),
         }
     }
 
@@ -68,7 +68,7 @@ impl Channel {
     where
         T: serde::ser::Serialize,
     {
-        for _i in 1..self.retries {
+        for _ in 1..self.retries {
             let res = self
                 .client
                 .post(&format!("{}/{}", self.address, path))
@@ -84,6 +84,7 @@ impl Channel {
     }
 
     pub fn broadcast(&self, party_num: u16, round: &str, data: String) -> Result<(), ()> {
+        // TODO Probably need more of these
         let key = format!("{}-{}-{}", party_num, round, self.uuid);
         let entry = Entry {
             key: key.clone(),
@@ -117,20 +118,18 @@ impl Channel {
 
     pub fn poll_for_broadcasts(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
         let mut ans_vec = Vec::new();
-        for i in 1..=n {
-            if i != party_num {
-                let key = format!("{}-{}-{}", i, round, self.uuid);
-                let index = Index { key };
-                loop {
-                    // add delay to allow the server to process request:
-                    thread::sleep(time::Duration::from_millis(25));
-                    let res_body = self.postb("get", index.clone()).unwrap();
-                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-                    if let Ok(answer) = answer {
-                        ans_vec.push(answer.value);
-                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                        break;
-                    }
+        for i in 0..n {
+            let key = format!("{}-{}-{}", i, round, self.uuid);
+            let index = Index { key };
+            loop {
+                // add delay to allow the server to process request:
+                thread::sleep(self.retry_delay);
+                let res_body = self.postb("get", index.clone()).unwrap();
+                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                if let Ok(answer) = answer {
+                    ans_vec.push(answer.value);
+                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                    break;
                 }
             }
         }
@@ -139,20 +138,18 @@ impl Channel {
 
     pub fn poll_for_p2p(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
         let mut ans_vec = Vec::new();
-        for i in 1..=n {
-            if i != party_num {
-                let key = format!("{}-{}-{}-{}", i, party_num, round, self.uuid);
-                let index = Index { key };
-                loop {
-                    // add delay to allow the server to process request:
-                    thread::sleep(time::Duration::from_millis(25));
-                    let res_body = self.postb("get", index.clone()).unwrap();
-                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-                    if let Ok(answer) = answer {
-                        ans_vec.push(answer.value);
-                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                        break;
-                    }
+        for i in 0..n {
+            let key = format!("{}-{}-{}-{}", i, party_num, round, self.uuid);
+            let index = Index { key };
+            loop {
+                // add delay to allow the server to process request:
+                thread::sleep(self.retry_delay);
+                let res_body = self.postb("get", index.clone()).unwrap();
+                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                if let Ok(answer) = answer {
+                    ans_vec.push(answer.value);
+                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                    break;
                 }
             }
         }

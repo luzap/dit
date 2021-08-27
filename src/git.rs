@@ -78,7 +78,7 @@ pub fn get_git_config(config: &str) -> String {
     }
 }
 
-fn get_current_timezone() -> Result<String> {
+pub fn get_current_timezone() -> Result<String> {
     let timezone = Command::new("date").arg("+%z").output()?;
     if !timezone.stdout.is_empty() {
         return parse_cmd_output(&timezone.stdout);

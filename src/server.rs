@@ -42,7 +42,6 @@ fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Op
         write_db.insert(
             project_name.clone(),
             Project {
-                name: project_name,
                 operation: new_operation,
                 participants: AtomicUsize::new(0),
                 keygen_identifier: Uuid::new_v4().to_string(),
@@ -95,6 +94,9 @@ fn get(
 ) -> Json<Result<Entry, ()>> {
     let project_name = "project".to_owned();
     let index: Index = request.0;
+
+
+    println!("Getting index: {:?}", index);
     // TODO I don't like holding the lock for so long but it seems necessary
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();
@@ -165,7 +167,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
     let project_name = "project".to_owned();
 
     let hm = db_mtx.read().unwrap();
-
     let project = hm.get(&project_name).unwrap();
 
     let op = &project.operation;
@@ -184,7 +185,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
     } as usize;
 
     let participants = &project.participants;
-
     let uuid = &project.sign_identifier;
 
     let res = if participants.load(Ordering::SeqCst) < threshold + 1 {
@@ -202,7 +202,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
 }
 
 struct Project {
-    name: String,
     operation: Arc<Operation>,
     participants: AtomicUsize,
     keygen_identifier: String,
