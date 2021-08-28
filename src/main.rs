@@ -1,6 +1,7 @@
 use dit::app;
 use dit::config;
 use dit::errors;
+use dit::comm::Channel;
 use dit::errors::Result;
 
 fn main() -> Result<()> {
@@ -11,8 +12,12 @@ fn main() -> Result<()> {
         None => panic!("No config!"),
     };
 
-    // TODO Want to create the channel at the top level
-    let (pending_operation, mut channel) = app::check_pending_operations(&config);
+    let channel = Channel::new(format!(
+        "http://{}:{}",
+        config.server.address, config.server.port
+    ));
+
+    let pending_operation = channel.get_current_operation();
 
     match app.get_matches().subcommand() {
         ("keygen", keygen_matches) => {
@@ -34,11 +39,6 @@ fn main() -> Result<()> {
             if pending_operation == dit::utils::Operation::Idle {
                 println!("Initiating tagging");
 
-
-                // TODO Let's create a wrapper to wrangle all of the data into the operation
-                // function
-
-                // TODO Replace this with a call to the /set
                 app::tag_subcommand(config, tag_matches)?;
             } else {
                 println!("Pending operation!: {:?}", pending_operation);

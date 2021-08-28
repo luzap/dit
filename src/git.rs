@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use crate::errors::{unwrap_or_exit, CommandError, CriticalError, Result, UserError};
+use crate::utils::Tag;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
@@ -123,22 +124,11 @@ pub fn get_git_tag_message(tag: &str) -> Result<String> {
         .collect())
 }
 
-pub fn create_tag_string(
-    commit: &str,
-    tag_name: &str,
-    tag_message: &str,
-    time: Duration,
-) -> Result<String> {
-    Ok(format!(
+pub fn create_tag_string(tag: &Tag) -> String {
+    format!(
         "object {}\ntype commit \ntag {}\ntagger {} {} {} {}\n\n{}\n",
-        commit,
-        tag_name,
-        get_git_config("name"),
-        get_git_config("email"),
-        time.as_secs(),
-        get_current_timezone()?,
-        tag_message
-    ))
+        tag.commit, tag.name, tag.creator, tag.email, tag.epoch, tag.timezone, tag.message
+    )
 }
 
 /// Creates a tag in the local Git repository
@@ -158,8 +148,6 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
 
     if !hash.stdout.is_empty() {
         let hash_string = parse_cmd_output(&hash.stdout)?;
-        // TODO Since part of the path should be identical regardless of
-        // repo, is there a better way to build the PathBuf?
         let tag_pointer = Path::join(&TAG_PATH, tag_name);
 
         fs::write(tag_pointer, hash_string)?;
@@ -174,9 +162,7 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
 
 pub fn git_owning_subcommand(subcommand: &str, args: &[&str]) -> Result<()> {
     let mut git_child = Command::new(GIT);
-    git_child
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit());
+    git_child.stdin(Stdio::inherit()).stdout(Stdio::inherit());
 
     // It's either this or handle possible empty subcommand at every call-site
     if subcommand.len() > 0 {

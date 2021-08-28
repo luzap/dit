@@ -35,14 +35,12 @@ pub enum Operation {
         email: String,
         epoch: u64,
     },
+    // TODO Might be best to encapsulate some of this to a dedicated structure, to avoid the
+// clutter
     SignTag {
         participants: u16,
         threshold: u16,
-        leader: String,
-        email: String,
-        epoch: u64,
-        timezone: String,
-        commit: String,
+        tag: Tag
     },
     SignKey {
         participants: u16,
@@ -53,6 +51,20 @@ pub enum Operation {
     },
     Blame {},
 }
+
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Eq)]
+pub struct Tag {
+    pub creator: String,
+    pub email: String, 
+    pub epoch: u64,
+    // TODO Technically this could be an integer with some string conversion
+    pub timezone: String,
+    pub name: String,
+    pub commit: String,
+    pub message: String
+}
+
 
 /// Get seconds since the Unix epoch
 ///

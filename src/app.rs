@@ -77,22 +77,13 @@ pub fn build_app() -> App<'static, 'static> {
     app
 }
 
-// TODO See if you can remove this
-// TODO How do we do about going for the operations now?
-pub fn check_pending_operations(config: &Config) -> (Operation, Channel) {
-    let channel = Channel::new(format!(
-        "http://{}:{}",
-        config.server.address, config.server.port
-    ));
-
-    let op = channel.get_current_operation();
-    (op, channel)
-}
-
-pub fn keygen_stage<P: AsRef<Path>>(
-    channel: &mut Channel,
-    keypair_file: P,
-) -> Result<PartyKeyPair> {
+/// Internal method to take care of local key generation tasks and serializing the keypair for
+/// future usage
+///
+/// # Warning
+/// Will fail on protocol, network and local file system errors
+///
+fn keygen_stage<P: AsRef<Path>>(channel: &mut Channel, keypair_file: P) -> Result<PartyKeyPair> {
     let keypair = dkg::distributed_keygen(channel).unwrap();
 
     fs::write(keypair_file, serde_json::to_string(&keypair)?)?;
@@ -100,7 +91,15 @@ pub fn keygen_stage<P: AsRef<Path>>(
     Ok(keypair)
 }
 
-pub fn keysign_stage<P: AsRef<Path>>(
+/// Internal method to marshall key signing when generation a valid PGP key. Both the leader and
+/// the participants need to call this method to produce a legitimate local signed key.
+///
+/// Note that the current way this is structured is quite inflexible: some number of the particants
+/// need to continue participating in the subsequent tag generation. In reality, this could either
+/// be used to do the "offline" computation for the tag portion of the protocol, and send
+/// legitimate PGP public keys to all parties (maybe the server should be a keyserver?)
+///
+fn keysign_stage<P: AsRef<Path>>(
     channel: &mut Channel,
     op: &Operation,
     keypair: &PartyKeyPair,
@@ -141,6 +140,11 @@ pub fn keysign_stage<P: AsRef<Path>>(
     Ok(())
 }
 
+
+/// Initiates the key generation operation and controls its subsequent control flow
+/// by sending the appropriate operations to the server. 
+///
+/// The leader is the only party that should change the state of an existing operation
 pub fn leader_keygen(
     channel: &mut Channel,
     config: &Config,
@@ -219,19 +223,14 @@ pub fn participant_keygen(channel: &mut Channel, args: Option<&ArgMatches>) -> R
     Ok(())
 }
 
-pub fn leader_tag<P: AsRef<Path>>(
-    channel: &mut Channel,
-    config: &Config,
-    keypair_path: P,
-    args: Option<&ArgMatches>,
-) -> Result<()> {
+pub fn leader_tag(channel: &mut Channel, config: &Config, args: Option<&ArgMatches>) -> Result<()> {
     if let Some(args) = args {
         let commit = args.value_of("commit").unwrap_or("HEAD");
-        let tag = args.value_of("tag name").unwrap();
+        let tag_name = args.value_of("tag name").unwrap();
         let message = if args.is_present("message") {
             String::from(args.value_of("message").unwrap())
         } else {
-            git::get_git_tag_message(tag)?
+            git::get_git_tag_message(tag_name)?
         };
 
         let keyfile = Path::join(
@@ -241,23 +240,31 @@ pub fn leader_tag<P: AsRef<Path>>(
 
         let hash = git::get_commit_hash(commit)?;
         let signing_time = utils::get_current_epoch()?;
-        let mut tag_string = git::create_tag_string(&hash, &tag, &message, signing_time)?;
         let user = config.clone().user.unwrap();
 
-        let op = Operation::SignTag {
-            participants: 4,
-            threshold: 2,
-            leader: user.username,
+        let tag = utils::Tag {
+            creator: user.username,
             email: user.email,
             epoch: signing_time.as_secs(),
             timezone: git::get_current_timezone()?,
             commit: hash.clone(),
+            name: tag_name.to_string(),
+            message: message.clone(),
+        };
+
+        let mut tag_string = git::create_tag_string(&tag);
+
+        let op = Operation::SignTag {
+            participants: 4,
+            threshold: 2,
+            tag,
         };
 
         channel.start_operation(&op);
 
         let mut message = Message::new();
         message.new_signature(signing_time);
+
         // TODO This API is rather nasty
         let mut hashable = tag_string.as_bytes().to_vec();
         hashable.append(&mut message.get_hashable());
@@ -272,7 +279,7 @@ pub fn leader_tag<P: AsRef<Path>>(
         let armor = armor_binary_output(&signature);
         tag_string.push_str(&armor);
 
-        git::create_git_tag(tag, &tag_string)?;
+        git::create_git_tag(&tag_name, &tag_string)?;
     }
 
     Ok(())
@@ -287,61 +294,36 @@ fn tag_signing_stage<P: AsRef<Path>>(
     Ok(signing::distributed_sign(channel, message, keypair).unwrap())
 }
 
-pub fn participant_tag(
-    channel: &mut Channel,
-    op: &Operation,
-    args: Option<&ArgMatches>,
-) -> Result<()> {
-    Ok(())
-}
+pub fn participant_tag(channel: &mut Channel, op: &Operation) -> Result<()> {
+    let (participants, threshold, tag) = match op {
+            Operation::SignTag {
+                participants, threshold, tag } => (participants, threshold, tag),
+                _ => unimplemented!("If this occurs, this should mean that the entire system reached an error state somehow")
+    };
 
-pub fn tag_subcommand(config: Config, args: Option<&ArgMatches>) -> Result<()> {
-    if let Some(args) = args {
-        let commit = args.value_of("commit").unwrap_or("HEAD");
-        let tag = args.value_of("tag name").unwrap();
-        let message = if args.is_present("message") {
-            String::from(args.value_of("message").unwrap())
-        } else {
-            git::get_git_tag_message(tag)?
-        };
+    let mut message = Message::new();
+    message.new_signature(Duration::from_secs(tag.epoch));
 
-        let keyfile = Path::join(
-            &cfg::KEY_DIR,
-            &args.value_of("pubkey").unwrap_or("public_key.json"),
-        );
+    let tag_string = git::create_tag_string(&tag);
 
-        let hash = git::get_commit_hash(commit)?;
-        let signing_time = utils::get_current_epoch()?;
-        let mut tag_string = git::create_tag_string(&hash, &tag, &message, signing_time)?;
+    let mut hashable = tag_string.as_bytes().to_vec();
+    hashable.append(&mut message.get_hashable());
 
-        // TODO Test this
-        let mut message = Message::new();
-        message.new_signature(signing_time);
-        let mut hashable = tag_string.as_bytes().to_vec();
-        hashable.append(&mut message.get_hashable());
-        let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
-
-        // let signature = tag_signing_stage(channel,
-
-        // let sig_data = encode_sig_data(signature);
-
-        let hash = &hash[hash.len() - 2..];
-        // message.finalize_signature(hash, sig_data);
-
-        let signature = message.get_formatted_message();
-        let armor = armor_binary_output(&signature);
-        tag_string.push_str(&armor);
-
-        git::create_git_tag(tag, &tag_string)?;
-    }
+    // When invoking this as a participant, the user currently does not have any way to
+    // specify their keyfile, which we should add some capacity to do at some point
+    let keyfile = Path::join(&cfg::KEY_DIR, "public_key.json");
+    tag_signing_stage(channel, &hashable, keyfile)?;
 
     Ok(())
 }
 
+/// Emulate `git` behaviour by passing unrecognized subcommands directly to the system `git`
+/// executable as-is.
+///
 /// # Warning
 /// `OsString` does not always contain valid Unicode, and the conversion to Rust strings
-/// may fail. Right now, if any of the command-line flags passed to the executable
-/// are not legitimate, we will simply remove them.
+/// may fail. Currently, `clap` takes all invalid Unicode input as erroneous, so this condition
+/// should never trigger.
 pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()> {
     let mut argv: Vec<&str> = Vec::new();
 
@@ -353,7 +335,8 @@ pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()
         argv.append(&mut args);
     }
 
-    // Special case of invoking `git` without subcommands or flags
+    // Special case of invoking `git` without subcommands or flags, which displays
+    // a list of subcommands and commands to invoke to get more help
     if argv.len() == 0 {
         argv.push("--help");
     }
