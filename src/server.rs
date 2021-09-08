@@ -6,7 +6,6 @@ use std::sync::{Arc, RwLock};
 
 use rocket::{post, routes, State};
 use rocket_contrib::json::Json;
-use uuid::Uuid;
 
 // TODO Move these to a separate crate
 use dit::comm::{Entry, Index, Key, PartySignup};
@@ -15,6 +14,7 @@ use dit::utils::Operation;
 // TODO Now we need to send the project name with every message
 // TODO Start doing error checks on the locks
 // TODO Start handling server errors
+// TODO Remove the UUIDs for all of the operations => they're unnecessary
 
 #[post("/start-operation", format = "json", data = "<request>")]
 fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Operation>) {
@@ -44,8 +44,6 @@ fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Op
             Project {
                 operation: new_operation,
                 participants: AtomicUsize::new(0),
-                keygen_identifier: Uuid::new_v4().to_string(),
-                sign_identifier: Uuid::new_v4().to_string(),
                 cache: RwLock::new(HashMap::new()),
             },
         );
@@ -80,11 +78,28 @@ fn get_operation(db: State<RwLock<HashMap<String, Project>>>) -> Json<Operation>
 fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
     let project_name = "project".to_owned();
 
+    // Reset project operation
     db.write()
         .unwrap()
         .get_mut(&project_name)
         .unwrap()
         .operation = Arc::new(Operation::Idle);
+    // Reset participant number
+    db.write()
+        .unwrap()
+        .get_mut(&project_name)
+        .unwrap()
+        .participants
+        .store(0, Ordering::SeqCst);
+    // Reset the cache -> we can avoid doing any UUID-related operations
+    /* db.write()
+        .unwrap()
+        .get_mut(&project_name)
+        .unwrap()
+        .cache
+        .write()
+        .unwrap()
+        .clear(); */
 }
 
 #[post("/get", format = "json", data = "<request>")]
@@ -94,7 +109,6 @@ fn get(
 ) -> Json<Result<Entry, ()>> {
     let project_name = "project".to_owned();
     let index: Index = request.0;
-
 
     println!("Getting index: {:?}", index);
     // TODO I don't like holding the lock for so long but it seems necessary
@@ -146,14 +160,12 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result
     } as usize;
     let participants = &project.participants;
 
-    let uuid = &project.keygen_identifier;
 
     let res = if participants.load(Ordering::SeqCst) < parties {
         let index = participants.fetch_add(1, Ordering::SeqCst);
 
         Ok(PartySignup {
             number: index as u16,
-            uuid: uuid.clone(),
         })
     } else {
         Err(())
@@ -181,18 +193,17 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
             threshold,
             ..
         } => threshold,
-        _ => return Json(Err(())),
+        _ => panic!("Trying to register for signatures when everything is not yet done!"),
     } as usize;
 
     let participants = &project.participants;
-    let uuid = &project.sign_identifier;
 
+    println!("participants: {}", participants.load(Ordering::SeqCst));
     let res = if participants.load(Ordering::SeqCst) < threshold + 1 {
         let index = participants.fetch_add(1, Ordering::SeqCst);
 
         Ok(PartySignup {
             number: index as u16,
-            uuid: uuid.clone(),
         })
     } else {
         Err(())
@@ -204,8 +215,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
 struct Project {
     operation: Arc<Operation>,
     participants: AtomicUsize,
-    keygen_identifier: String,
-    sign_identifier: String,
     cache: RwLock<HashMap<Key, String>>,
 }
 

@@ -1,5 +1,4 @@
 use crate::comm::{Channel, PartyKeyPair};
-use crate::errors::Result;
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
     keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4, KeyGenStage1Input,
@@ -32,12 +31,12 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
     channel
         .broadcast(
             party_num_int,
-            "round1",
+            "dkg-round1",
             serde_json::to_string(&res_stage1.bc_com1_l).unwrap(),
         )
         .unwrap();
 
-    let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round1");
+    let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round1");
 
     let bc1_vec = round1_ans_vec
         .iter()
@@ -47,12 +46,12 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
     channel
         .broadcast(
             party_num_int,
-            "round2",
+            "dkg-round2",
             serde_json::to_string(&res_stage1.decom1_l).unwrap(),
         )
         .unwrap();
 
-    let round2_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round2");
+    let round2_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round2");
 
     let decom1_vec = round2_ans_vec
         .iter()
@@ -83,13 +82,14 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
             .sendp2p(
                 party_num_int,
                 i,
-                "round3",
+                "dkg-round3",
                 serde_json::to_string(&res_stage2.secret_shares_s[k]).unwrap(),
             )
             .unwrap();
     }
+
     // get shares from other parties.
-    let round3_ans_vec = channel.poll_for_p2p(party_num_int, params.share_count, "round3");
+    let round3_ans_vec = channel.poll_for_p2p(party_num_int, params.share_count, "dkg-round3");
 
     let party_shares = round3_ans_vec
         .iter()
@@ -99,13 +99,13 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
     channel
         .broadcast(
             party_num_int,
-            "round4",
+            "dkg-round4",
             serde_json::to_string(&res_stage2.vss_scheme_s).unwrap(),
         )
         .unwrap();
 
     //get vss_scheme for others.
-    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round4");
+    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round4");
 
     let vss_scheme_vec = round4_ans_vec
         .iter()
@@ -124,12 +124,12 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
     channel
         .broadcast(
             party_num_int,
-            "round5",
+            "dkg-round5",
             serde_json::to_string(&res_stage3.dlog_proof_s).unwrap(),
         )
         .unwrap();
 
-    let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "round5");
+    let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round5");
 
     let dlog_proof_vec = round5_ans_vec
         .iter()
@@ -147,7 +147,7 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
     let paillier_key_vec = (0..params.share_count)
         .map(|i| bc1_vec[i as usize].e.clone())
         .collect::<Vec<EncryptionKey>>();
-    let h1_h2_N_tilde_vec = bc1_vec
+    let h1h2ntilde = bc1_vec
         .iter()
         .map(|bc1| bc1.dlog_statement.clone())
         .collect::<Vec<DLogStatement>>();
@@ -159,6 +159,6 @@ pub fn distributed_keygen(channel: &mut Channel) -> std::result::Result<PartyKey
         vss_scheme_vec_s: vss_scheme_vec,
         paillier_key_vec_s: paillier_key_vec,
         y_sum_s: y_sum,
-        h1_h2_N_tilde_vec_s: h1_h2_N_tilde_vec,
+        h1_h2_N_tilde_vec_s: h1h2ntilde,
     })
 }

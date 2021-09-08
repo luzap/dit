@@ -1,7 +1,7 @@
 use dit::app;
+use dit::comm::Channel;
 use dit::config;
 use dit::errors;
-use dit::comm::Channel;
 use dit::errors::Result;
 
 fn main() -> Result<()> {
@@ -12,7 +12,7 @@ fn main() -> Result<()> {
         None => panic!("No config!"),
     };
 
-    let channel = Channel::new(format!(
+    let mut channel = Channel::new(format!(
         "http://{}:{}",
         config.server.address, config.server.port
     ));
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
                 )?;
 
                 if choice == 0 {
-                    dit::app::participant_keygen(&mut channel, keygen_matches)?;
+                    dit::app::participant_keygen(&mut channel, &pending_operation)?;
                 }
             }
         }
@@ -39,22 +39,39 @@ fn main() -> Result<()> {
             if pending_operation == dit::utils::Operation::Idle {
                 println!("Initiating tagging");
 
-                app::tag_subcommand(config, tag_matches)?;
+                app::leader_tag(&mut channel, &config, tag_matches)?;
             } else {
                 println!("Pending operation!: {:?}", pending_operation);
-                // TODO Check for participation
-                let choice = errors::unwrap_or_exit(dit::utils::get_user_choice(
+
+                if errors::unwrap_or_exit(dit::utils::get_user_choice(
                     "Participate in the pending operation?",
                     &["y", "n"],
-                ));
-                if choice == 0 {
-                    app::tag_subcommand(config, tag_matches)?;
-
+                )) == 0
+                {
+                    app::participant_tag(&mut channel, &pending_operation)?;
                 }
             }
         }
         (other, args) => {
-            println!("{:?}", args);
+            if pending_operation != dit::utils::Operation::Idle {
+                if errors::unwrap_or_exit(dit::utils::get_user_choice(
+                    "Participate in the pending operation?",
+                    &["y", "n"],
+                )) == 0
+                {
+                    match pending_operation {
+                        // TODO The argument is not quite correct and should be changed
+                        dit::utils::Operation::KeyGen { .. } => {
+                            app::participant_keygen(&mut channel, &pending_operation)?
+                        }
+                        dit::utils::Operation::SignTag { .. } => {
+                            app::participant_tag(&mut channel, &pending_operation)?
+                        }
+                        dit::utils::Operation::Blame {} => unimplemented!(),
+                        _ => unreachable!(),
+                    };
+                }
+            }
             app::git_passthrough(other, args)?;
         }
     };

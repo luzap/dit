@@ -17,12 +17,12 @@ use paillier::*;
 use crate::comm::Channel;
 // use crate::errors::Result;
 
+// TODO Use the operation to get the number of participants
 pub fn distributed_sign(
-    channel: &mut Channel,
+    channel: &Channel,
     message: &[u8],
     keypair: PartyKeyPair,
 ) -> Result<SignatureRecid, ()> {
-    // TODO Get this from the operation
     let params = Parameters {
         threshold: 2,
         share_count: 4,
@@ -30,37 +30,33 @@ pub fn distributed_sign(
 
     let party_num_int = channel.signup_sign().unwrap();
 
-    // round 0: collect signers IDs
     channel
         .broadcast(
             party_num_int,
-            "round0",
+            "sign-round0",
             serde_json::to_string(&keypair.party_num_int_s).unwrap(),
         )
         .unwrap();
 
-    let round0_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round0");
-    let signers_vec: Vec<usize> = round0_ans_vec
-        .iter()
-        .map(|m| serde_json::from_str(&m).unwrap())
-        .collect();
+    let round0_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "sign-round0");
 
-    /* let mut j = 0;
-    //0 indexed vec containing ids of the signing parties.
     let mut signers_vec: Vec<usize> = Vec::new();
-    for i in 1..=params.threshold + 1 {
-        if i == party_num_int {
-            signers_vec.push(keypair.party_num_int_s as usize);
-        } else {
-            let signer_j: u16 = serde_json::from_str(&round0_ans_vec[j]).unwrap();
-            signers_vec.push((signer_j - 1) as usize);
-            j += 1;
-        }
-    } */
+    let signers: Vec<usize> = round0_ans_vec.iter().map(|e| 
+        serde_json::from_str(&e).unwrap()).collect();
+
+
+    for i in 0..=params.threshold {
+        let signer_j: u16 = serde_json::from_str(&round0_ans_vec[i as usize]).unwrap();
+        signers_vec.push(signer_j as usize);
+    }
+
+
+    // TODO Remove this
+    assert_eq!(signers_vec, signers);
 
     let input_stage1 = SignStage1Input {
-        vss_scheme: keypair.vss_scheme_vec_s[signers_vec[(party_num_int - 1) as usize]].clone(),
-        index: signers_vec[(party_num_int - 1) as usize],
+        vss_scheme: keypair.vss_scheme_vec_s[signers_vec[party_num_int as usize]].clone(),
+        index: signers_vec[party_num_int as usize],
         s_l: signers_vec.clone(),
         party_keys: keypair.party_keys_s.clone(),
         shared_keys: keypair.shared_keys,
@@ -70,7 +66,7 @@ pub fn distributed_sign(
     channel
         .broadcast(
             party_num_int,
-            "round1",
+            "sign-round1",
             serde_json::to_string(&(
                 res_stage1.bc1.clone(),
                 res_stage1.m_a.0.clone(),
@@ -80,76 +76,73 @@ pub fn distributed_sign(
         )
         .unwrap();
 
-    let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round1");
+    // TODO Is the length correct here?
+    let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "sign-round1");
 
-    let mut bc1_vec: Vec<SignBroadcastPhase1> = Vec::with_capacity((params.threshold + 1) as usize);
-    let mut m_a_vec: Vec<MessageA> = Vec::with_capacity((params.threshold + 1) as usize);
-    let mut g_w_i_vec: Vec<GE> = Vec::with_capacity((params.threshold + 1) as usize);
+    let mut bc1s: Vec<SignBroadcastPhase1> = Vec::new();
+    let mut mas: Vec<MessageA> = Vec::new();
+    let mut gwis: Vec<GE> = vec![];
 
-    // TODO Double check if this is indeed removable
-    /* for i in 1..params.threshold + 2 {
-        if i == party_num_int {
-            bc1_vec.push(res_stage1.bc1.clone());
-            g_w_i_vec.push(res_stage1.sign_keys.g_w_i);
-            m_a_vec.push(res_stage1.m_a.0.clone());
-        } else {
+    for ans in round1_ans_vec.iter() {
             let (bc1_j, m_a_party_j, g_w_i): (SignBroadcastPhase1, MessageA, GE) =
-                serde_json::from_str(&round1_ans_vec[j]).unwrap();
-            bc1_vec.push(bc1_j);
-            g_w_i_vec.push(g_w_i);
-            m_a_vec.push(m_a_party_j);
-
-            j += 1;
-        }
-    } */
-    for i in 0..=params.threshold + 1 {
-        let (bc1, m_a, g_w): (SignBroadcastPhase1, MessageA, GE) =
-            serde_json::from_str(&round1_ans_vec[i as usize]).unwrap();
-        bc1_vec.push(bc1);
-        g_w_i_vec.push(g_w);
-        m_a_vec.push(m_a);
+                serde_json::from_str(&ans).unwrap();
+            bc1s.push(bc1_j);
+            gwis.push(g_w_i);
+            mas.push(m_a_party_j);
     }
 
-    assert_eq!(signers_vec.len(), bc1_vec.len());
+    assert_eq!(signers_vec.len(), bc1s.len());
 
     let input_stage2 = SignStage2Input {
-        m_a_vec: m_a_vec,
+        m_a_vec: mas,
         gamma_i: res_stage1.sign_keys.gamma_i,
         w_i: res_stage1.sign_keys.w_i,
         ek_vec: keypair.paillier_key_vec_s.clone(),
-        index: (party_num_int - 1) as usize,
+        index: party_num_int as usize,
         l_ttag: signers_vec.len() as usize,
         l_s: signers_vec.clone(),
     };
+    
 
     let mut beta_vec: Vec<FE> = vec![];
     let mut ni_vec: Vec<FE> = vec![];
     // TODO add
     let res_stage2 = sign_stage2(&input_stage2).expect("sign stage2 failed.");
-    // Send out MessageB, beta, ni to other signers so that they can calculate there alpha values.
-    for i in 0..=params.threshold + 1 {
-        // TODO Add caching to the channel layer
-        // private values and they should never be sent out
-        beta_vec.push(res_stage2.gamma_i_vec[i as usize].1);
-        ni_vec.push(res_stage2.w_i_vec[i as usize].1);
-        // Below two are the C_b messages on page 11 https://eprint.iacr.org/2020/540.pdf
-        // paillier encrypted values and are thus safe to send as is.
-        let c_b_messageb_gammai = res_stage2.gamma_i_vec[i as usize].0.clone();
-        let c_b_messageb_wi = res_stage2.w_i_vec[i as usize].0.clone();
+    // Send out MessageB, beta, ni to other signers so that they can calculate their alpha values.
+    let mut j = 0;
+    // TODO Rework this, for something about it is currently incorrect.
+    // This is one of the few places where there seems to be some issues with the new model where
+    // we send everything, because we don't generate enough data __to__ send. However, we still
+    // need to provide at least some sort of value or we have to change everything else
 
-        // If this client were implementing blame(Identifiable abort) then this message should have been broadcast.
-        // For the current implementation p2p send is also fine.
-        channel
-            .sendp2p(
-                party_num_int,
-                i,
-                "round2",
-                serde_json::to_string(&(c_b_messageb_gammai, c_b_messageb_wi)).unwrap(),
-            )
-            .unwrap();
+    for i in 0..params.threshold + 1 {
+        if i != party_num_int {
+            // private values that should never be sent out 
+            beta_vec.push(res_stage2.gamma_i_vec[j].1);
+            ni_vec.push(res_stage2.w_i_vec[j].1);
+
+            // TODO These are the messages that need to be sent out to everyone
+            // Below two are the C_b messages on page 11 https://eprint.iacr.org/2020/540.pdf
+            // paillier encrypted values and are thus safe to send as is.
+            let c_b_messageb_gammai = res_stage2.gamma_i_vec[j].0.clone();
+            let c_b_messageb_wi = res_stage2.w_i_vec[j].0.clone();
+
+            // If this client were implementing blame(Identifiable abort) then this message should have been broadcast.
+            // For the current implementation p2p send is also fine.
+            channel
+                .sendp2p(
+                    party_num_int,
+                    i,
+                    "sign-round2",
+                    serde_json::to_string(&(c_b_messageb_gammai, c_b_messageb_wi)).unwrap(),
+                )
+                .unwrap();
+
+            j += 1;
+        } 
     }
 
-    let round2_ans_vec = channel.poll_for_p2p(party_num_int, params.threshold + 1, "round2");
+    let round2_ans_vec = channel.poll_for_p2p(party_num_int, params.threshold, "sign-round2");
 
     let mut m_b_gamma_rec_vec: Vec<MessageB> = Vec::new();
     let mut m_b_w_rec_vec: Vec<MessageB> = Vec::new();
@@ -161,24 +154,32 @@ pub fn distributed_sign(
         m_b_w_rec_vec.push(l_mb_w);
     }
 
+
     let input_stage3 = SignStage3Input {
         dk_s: keypair.party_keys_s.dk.clone(),
         k_i_s: res_stage1.sign_keys.k_i,
         m_b_gamma_s: m_b_gamma_rec_vec.clone(),
         m_b_w_s: m_b_w_rec_vec,
-        index_s: (party_num_int - 1) as usize,
+        index_s: party_num_int as usize,
         ttag_s: signers_vec.len(),
-        g_w_i_s: g_w_i_vec,
+        g_w_i_s: gwis,
     };
 
     let res_stage3 = sign_stage3(&input_stage3).expect("Sign stage 3 failed.");
+
     let mut alpha_vec = vec![];
     let mut miu_vec = vec![];
     // Send out alpha, miu to other signers.
-    for i in 0..=params.threshold + 1 {
-        alpha_vec.push(res_stage3.alpha_vec_gamma[i as usize]);
-        miu_vec.push(res_stage3.alpha_vec_w[i as usize]);
+    let mut j = 0;
+    for i in 1..params.threshold + 2 {
+        if i != party_num_int {
+            alpha_vec.push(res_stage3.alpha_vec_gamma[j]);
+            miu_vec.push(res_stage3.alpha_vec_w[j]);
+            j += 1;
+        }
     }
+
+    // TODO Should there be another broadcast here?
 
     let input_stage4 = SignStage4Input {
         alpha_vec_s: alpha_vec,
@@ -192,20 +193,27 @@ pub fn distributed_sign(
     channel
         .broadcast(
             party_num_int,
-            "round4",
+            "sign-round4",
             serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i)).unwrap(),
         )
         .unwrap();
 
-    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round4");
+    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "sign-round4");
 
     let mut delta_i_vec = vec![];
     let mut decom1_vec = vec![];
-    for i in 0..=params.threshold + 1 {
-        let (decom_l, delta_l): (SignDecommitPhase1, FE) =
-            serde_json::from_str(&round4_ans_vec[i as usize]).unwrap();
-        delta_i_vec.push(delta_l);
-        decom1_vec.push(decom_l);
+    let mut j = 0;
+    for i in 1..params.threshold + 2 {
+        if i == party_num_int {
+            delta_i_vec.push(res_stage4.delta_i);
+            decom1_vec.push(res_stage1.decom1.clone());
+        } else {
+            let (decom_l, delta_l): (SignDecommitPhase1, FE) =
+                serde_json::from_str(&round4_ans_vec[j]).unwrap();
+            delta_i_vec.push(delta_l);
+            decom1_vec.push(decom_l);
+            j += 1;
+        }
     }
 
     let delta_inv_l = SignKeys::phase3_reconstruct_delta(&delta_i_vec);
@@ -213,8 +221,8 @@ pub fn distributed_sign(
         m_b_gamma_vec: m_b_gamma_rec_vec,
         delta_inv: delta_inv_l,
         decom_vec1: decom1_vec,
-        bc1_vec: bc1_vec.clone(),
-        index: (party_num_int - 1) as usize,
+        bc1_vec: bc1s.clone(),
+        index: party_num_int as usize,
         sign_keys: res_stage1.sign_keys.clone(),
         s_ttag: signers_vec.len(),
     };
@@ -222,33 +230,40 @@ pub fn distributed_sign(
     channel
         .broadcast(
             party_num_int,
-            "round5",
+            "sign-round5",
             serde_json::to_string(&(res_stage5.R_dash, res_stage5.R)).unwrap(),
         )
         .unwrap();
 
     let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round5");
 
-    let mut r_vec = vec![];
-    let mut R_dash_vec = vec![];
-    for i in 0..=params.threshold + 1 {
-        let (R_dash, R): (GE, GE) = serde_json::from_str(&round5_ans_vec[i as usize]).unwrap();
-        r_vec.push(R);
-        R_dash_vec.push(R_dash);
+    let mut rs = vec![];
+    let mut rdashes = vec![];
+    let mut j = 0;
+    for i in 1..params.threshold + 2 {
+        if i == party_num_int {
+            rs.push(res_stage5.R);
+            rdashes.push(res_stage5.R_dash);
+        } else {
+            let (rdash, r): (GE, GE) = serde_json::from_str(&round5_ans_vec[j]).unwrap();
+            rs.push(r);
+            rdashes.push(rdash);
+            j += 1;
+        }
     }
 
     let message = HSha256::create_hash(&[&BigInt::from_bytes(message)]);
 
     let input_stage6 = SignStage6Input {
-        R_dash_vec,
+        R_dash_vec: rdashes,
         R: res_stage5.R,
         m_a: res_stage1.m_a.0.clone(),
-        e_k: keypair.paillier_key_vec_s[signers_vec[(party_num_int - 1) as usize] as usize].clone(),
+        e_k: keypair.paillier_key_vec_s[signers_vec[party_num_int as usize] as usize].clone(),
         k_i: res_stage1.sign_keys.k_i,
         randomness: res_stage1.m_a.1.clone(),
         party_keys: keypair.party_keys_s.clone(),
         h1_h2_N_tilde_vec: keypair.h1_h2_N_tilde_vec_s.clone(),
-        index: (party_num_int - 1) as usize,
+        index: party_num_int as usize,
         s: signers_vec.clone(),
         sigma: res_stage4.sigma_i,
         ysum: keypair.y_sum_s,
@@ -260,18 +275,24 @@ pub fn distributed_sign(
     channel
         .broadcast(
             party_num_int,
-            "round6",
+            "sign-round6",
             serde_json::to_string(&res_stage6.local_sig).unwrap(),
         )
         .unwrap();
 
-    let round6_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "round6");
+    let round6_ans_vec = channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "sign-round6");
 
-    let local_sig_vec: Vec<LocalSignature> = round6_ans_vec
-        .iter()
-        .map(|m| serde_json::from_str(&m).unwrap())
-        .collect();
-
+    let mut local_sig_vec = vec![];
+    let mut j = 0;
+    for i in 1..params.threshold + 2 {
+        if i == party_num_int {
+            local_sig_vec.push(res_stage6.local_sig.clone());
+        } else {
+            let local_sig: LocalSignature = serde_json::from_str(&round6_ans_vec[j]).unwrap();
+            local_sig_vec.push(local_sig.clone());
+            j += 1;
+        }
+    }
     let input_stage7 = SignStage7Input {
         local_sig_vec: local_sig_vec,
         ysum: keypair.y_sum_s.clone(),

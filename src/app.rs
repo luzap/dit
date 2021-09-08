@@ -3,6 +3,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+// TODO Get rid of this -> maybe some sort of notification for the state change?
+use std::thread::sleep;
+
 use crate::comm::Channel;
 use crate::comm::PartyKeyPair;
 use crate::config as cfg;
@@ -86,6 +89,7 @@ pub fn build_app() -> App<'static, 'static> {
 fn keygen_stage<P: AsRef<Path>>(channel: &mut Channel, keypair_file: P) -> Result<PartyKeyPair> {
     let keypair = dkg::distributed_keygen(channel).unwrap();
 
+    println!("{:?}", keypair_file.as_ref());
     fs::write(keypair_file, serde_json::to_string(&keypair)?)?;
 
     Ok(keypair)
@@ -134,15 +138,14 @@ fn keysign_stage<P: AsRef<Path>>(
 
         message.write_to_file(pgp_file)?;
     } else {
-        panic!("Wrong operation!")
+        println!("Started signing, with the operation: {:?}", op);
     }
 
     Ok(())
 }
 
-
 /// Initiates the key generation operation and controls its subsequent control flow
-/// by sending the appropriate operations to the server. 
+/// by sending the appropriate operations to the server.
 ///
 /// The leader is the only party that should change the state of an existing operation
 pub fn leader_keygen(
@@ -200,25 +203,26 @@ pub fn leader_keygen(
     Ok(())
 }
 
-pub fn participant_keygen(channel: &mut Channel, args: Option<&ArgMatches>) -> Result<()> {
-    if let Some(args) = args {
-        // TODO Change the name of the default keyfile
-        let key_base_dir = &cfg::KEY_DIR.clone();
-        let pgp_keyfile = Path::join(
-            &key_base_dir,
-            args.value_of("keyfile").unwrap_or("keyfile.pgp"),
-        );
+// TODO REmove the args
+pub fn participant_keygen(channel: &mut Channel, op: &Operation) -> Result<()> {
+    // TODO Change the name of the default keyfile
+    let key_base_dir = &cfg::KEY_DIR.clone();
+    let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
 
-        let keypair_file = Path::join(
-            &key_base_dir,
-            args.value_of("pubkey").unwrap_or("public_key.json"),
-        );
+    let keypair_file = Path::join(&key_base_dir, "public_key.json");
 
-        let keypair = keygen_stage(channel, keypair_file)?;
-        let op = channel.get_current_operation();
+    let keypair = keygen_stage(channel, keypair_file)?;
 
-        keysign_stage(channel, &op, &keypair, pgp_keyfile)?;
-    }
+    // How do we do a spinlock?
+    let new_op = loop {
+        let new_op = channel.get_current_operation();
+        if matches!(new_op, Operation::SignKey{ .. }) {
+           break new_op; 
+        } else {
+            sleep(Duration::from_millis(250));
+        }
+    };
+    keysign_stage(channel, &new_op, &keypair, pgp_keyfile)?;
 
     Ok(())
 }
