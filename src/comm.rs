@@ -141,8 +141,10 @@ impl Channel {
             loop {
                 // add delay to allow the server to process request:
                 thread::sleep(self.retry_delay);
+
                 let res_body = self.postb("get", index.clone()).unwrap();
                 let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+
                 if let Ok(answer) = answer {
                     ans_vec.push(answer.value);
                     println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
