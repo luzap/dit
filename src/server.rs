@@ -12,9 +12,7 @@ use dit::comm::{Entry, Index, Key, PartySignup};
 use dit::utils::Operation;
 
 // TODO Now we need to send the project name with every message
-// TODO Start doing error checks on the locks
 // TODO Start handling server errors
-// TODO Remove the UUIDs for all of the operations => they're unnecessary
 
 #[post("/start-operation", format = "json", data = "<request>")]
 fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Operation>) {
@@ -137,6 +135,9 @@ fn set(
     let project_name = "project".to_owned();
 
     let entry: Entry = request.0;
+
+
+    println!("Getting index: {:?}", entry);
     let hm = db_mtx.write().unwrap();
     let project = hm.get(&project_name).unwrap();
     let mut project_cache = project.cache.write().unwrap();
@@ -162,7 +163,7 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result
 
 
     let res = if participants.load(Ordering::SeqCst) < parties {
-        let index = participants.fetch_add(1, Ordering::SeqCst);
+        let index = participants.fetch_add(1, Ordering::SeqCst) + 1;
 
         Ok(PartySignup {
             number: index as u16,
@@ -200,7 +201,7 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<P
 
     println!("participants: {}", participants.load(Ordering::SeqCst));
     let res = if participants.load(Ordering::SeqCst) < threshold + 1 {
-        let index = participants.fetch_add(1, Ordering::SeqCst);
+        let index = participants.fetch_add(1, Ordering::SeqCst) + 1;
 
         Ok(PartySignup {
             number: index as u16,
