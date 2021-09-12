@@ -132,7 +132,7 @@ fn keysign_stage<P: AsRef<Path>>(
         let hashed = message.get_sha256_hash(None);
         let hashed = &hashed[hashed.len() - 2..];
 
-        let signature = signing::distributed_sign(channel, &hashable, keypair.clone()).unwrap();
+        let signature = signing::distributed_sign(channel, &hashable, &keypair).unwrap();
         let sig_data = encode_sig_data(signature);
         message.finalize_signature(hashed, sig_data);
 
@@ -200,10 +200,11 @@ pub fn leader_keygen(
 
     keysign_stage(channel, &op, &keypair, pgp_keyfile)?;
 
+    channel.end_operation(&op);
+
     Ok(())
 }
 
-// TODO REmove the args
 pub fn participant_keygen(channel: &mut Channel, op: &Operation) -> Result<()> {
     // TODO Change the name of the default keyfile
     let key_base_dir = &cfg::KEY_DIR.clone();
@@ -295,7 +296,7 @@ fn tag_signing_stage<P: AsRef<Path>>(
     keyfile: P,
 ) -> Result<SignatureRecid> {
     let keypair: PartyKeyPair = utils::read_data_from_file(&keyfile)?;
-    Ok(signing::distributed_sign(channel, message, keypair).unwrap())
+    Ok(signing::distributed_sign(channel, message, &keypair).unwrap())
 }
 
 pub fn participant_tag(channel: &mut Channel, op: &Operation) -> Result<()> {

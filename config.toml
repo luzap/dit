@@ -1,0 +1,6 @@
+project = "thresholds"
+
+[server]
+address = "localhost"
+port = 8000
+

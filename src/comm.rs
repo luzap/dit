@@ -82,7 +82,7 @@ impl Channel {
 
     pub fn broadcast(&self, party_num: u16, round: &str, data: String) -> Result<(), ()> {
         // TODO Probably need more of these
-        let key = format!("{}-{}", party_num, round );
+        let key = format!("{}-{}", party_num, round);
         let entry = Entry {
             key: key.clone(),
             value: data,
@@ -115,18 +115,20 @@ impl Channel {
 
     pub fn poll_for_broadcasts(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
         let mut ans_vec = Vec::new();
-        for i in 0..n {
-            let key = format!("{}-{}", i, round);
-            let index = Index { key };
-            loop {
-                // add delay to allow the server to process request:
-                thread::sleep(self.retry_delay);
-                let res_body = self.postb("get", index.clone()).unwrap();
-                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-                if let Ok(answer) = answer {
-                    ans_vec.push(answer.value);
-                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                    break;
+        for i in 1..=n {
+            if i != party_num {
+                let key = format!("{}-{}", i, round);
+                let index = Index { key };
+                loop {
+                    // add delay to allow the server to process request:
+                    thread::sleep(self.retry_delay);
+                    let res_body = self.postb("get", index.clone()).unwrap();
+                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                    if let Ok(answer) = answer {
+                        ans_vec.push(answer.value);
+                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                        break;
+                    }
                 }
             }
         }
@@ -135,20 +137,20 @@ impl Channel {
 
     pub fn poll_for_p2p(&self, party_num: u16, n: u16, round: &str) -> Vec<String> {
         let mut ans_vec = Vec::new();
-        for i in 0..n {
-            let key = format!("{}-{}-{}", i, party_num, round);
-            let index = Index { key };
-            loop {
-                // add delay to allow the server to process request:
-                thread::sleep(self.retry_delay);
-
-                let res_body = self.postb("get", index.clone()).unwrap();
-                let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
-
-                if let Ok(answer) = answer {
-                    ans_vec.push(answer.value);
-                    println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
-                    break;
+        for i in 1..=n {
+            if i != party_num {
+                let key = format!("{}-{}-{}", i, party_num, round);
+                let index = Index { key };
+                loop {
+                    // add delay to allow the server to process request:
+                    thread::sleep(self.retry_delay);
+                    let res_body = self.postb("get", index.clone()).unwrap();
+                    let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
+                    if let Ok(answer) = answer {
+                        ans_vec.push(answer.value);
+                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
+                        break;
+                    }
                 }
             }
         }
@@ -195,4 +197,17 @@ impl Channel {
         }
     }
 
+    pub fn signout(&self) -> Result<(), ()> {
+        let key = "sign".to_owned();
+
+        let res_body: String = self.postb("signoutsign", key).unwrap();
+        let res_body: Result<PartySignup, ()> = serde_json::from_str(&res_body).unwrap();
+
+        if let Ok(_) = res_body {
+            Ok(())
+        } else {
+            // TODO Something about this seems a little wrong
+            panic!("Couldn't register!");
+        }
+    }
 }

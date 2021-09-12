@@ -5,6 +5,8 @@ use std::io;
 use std::string;
 use std::time;
 
+use serde::{Serialize, Deserialize};
+
 #[derive(Debug)]
 pub struct CommandError {
     command: String,
@@ -12,23 +14,22 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    pub fn new(command: String, error: String) -> CommandError { 
-        CommandError {
-            command,
-            error
-        }
+    pub fn new(command: String, error: String) -> CommandError {
+        CommandError { command, error }
     }
 }
 
-
 impl fmt::Display for CommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[Command] `{}` failed with message {}", self.command, self.error)
+        write!(
+            f,
+            "[Command] `{}` failed with message {}",
+            self.command, self.error
+        )
     }
 }
 
 impl Error for CommandError {
-    
     fn description(&self) -> &str {
         &self.error
     }
@@ -37,12 +38,11 @@ impl Error for CommandError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         None
     }
-
 }
 
 #[derive(Debug)]
 pub enum UserError {
-    TagMessage
+    TagMessage,
 }
 
 impl fmt::Display for UserError {
@@ -77,7 +77,7 @@ impl fmt::Display for CriticalError {
                 let error_kind = err.kind();
 
                 write!(f, "[File System]:\t{:?}, {}", error_kind, err)
-            },
+            }
             // TODO Right now, this error does not actually exist
             CriticalError::Network => write!(f, "[{:10?}]", self),
             CriticalError::JSON(ref err) => {
@@ -94,7 +94,7 @@ impl fmt::Display for CriticalError {
                 write!(f, "[JSON]\t{}", error_context)
             }
             CriticalError::HTTP(ref err) => write!(f, "[HTTP]\t{}", err.get_ref().unwrap()),
-            CriticalError::Encoding(ref err) => write!(f, "[Encoding]\t{}",  err),
+            CriticalError::Encoding(ref err) => write!(f, "[Encoding]\t{}", err),
             CriticalError::Command(ref err) => write!(f, "[Command]\t{}", err),
             CriticalError::User(ref err) => write!(f, "[User]\t{}", err),
             CriticalError::Clock(ref err) => write!(f, "[Clock]\t{}", err),
@@ -154,6 +154,15 @@ impl Error for CriticalError {
     }
 }
 
+#[derive(Serialize, Deserialize, )]
+enum ProtocolError {
+    Timeout,
+    Connection,
+    Blame
+}
+
+
+
 pub fn unwrap_or_exit<T>(wrapped: Result<T>) -> T {
     match wrapped {
         Ok(val) => val,
@@ -163,3 +172,6 @@ pub fn unwrap_or_exit<T>(wrapped: Result<T>) -> T {
         }
     }
 }
+
+
+
