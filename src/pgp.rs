@@ -79,17 +79,17 @@ fn duration_to_bytes(duration: Duration) -> Vec<u8> {
     duration.as_secs().to_be_bytes()[4..].to_vec()
 }
 
-const CRC24_INIT: u64 = 0xB704CE;
-const CRC24_POLY: u64 = 0x1864CFB;
+const CRC24_INIT: u32 = 0xB704CE;
+const CRC24_POLY: u32 = 0x1864CFB;
 
-fn compute_crc(buffer: &[u8]) -> u64 {
+fn compute_crc(buffer: &[u8]) -> u32 {
     let mut crc = CRC24_INIT;
 
-    for byte in buffer.iter() {
-        crc ^= (*byte as u64) << 16u64;
+    for &byte in buffer.iter() {
+        crc ^= (byte as u32) << 16;
         for _ in 0..8 {
             crc <<= 1;
-            if crc & 0x1000000 > 0 {
+            if (crc & 0x1000000) != 0 {
                 crc ^= CRC24_POLY;
             }
         }
@@ -114,6 +114,7 @@ pub fn armor_binary_output(buffer: &[u8]) -> String {
     armor.push_str("-----BEGIN PGP SIGNATURE-----\n\n");
     let encoded = String::from_utf8(radix64).unwrap();
     armor.push_str(&encoded);
+    armor.push('\n');
     let encoded_crc = String::from_utf8(crc.to_vec()).unwrap();
     armor.push_str(&encoded_crc);
 
