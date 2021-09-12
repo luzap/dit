@@ -1,7 +1,8 @@
 use std::fs;
+use std::fs::File;
+use std::io::prelude::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 use crate::errors::{unwrap_or_exit, CommandError, CriticalError, Result, UserError};
 use crate::utils::Tag;
@@ -105,11 +106,16 @@ pub fn get_git_tag_message(tag: &str) -> Result<String> {
         tag
     );
 
-    fs::write(TAG_MSG_FILE.as_path(), tag_message)?;
+    let mut file = File::create(TAG_MSG_FILE.as_path())?;
+    file.write(&tag_message.as_bytes())?;
 
     editor_child.spawn()?.wait()?;
 
     let output = fs::read_to_string(TAG_MSG_FILE.as_path())?;
+    if output.is_empty() {
+        return Err(CriticalError::User(UserError::TagMessage));
+    }
+
     let len = output.len() - TAG_MSG.len();
     if len == 0 {
         // TODO What do we
