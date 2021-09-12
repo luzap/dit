@@ -15,6 +15,7 @@ use crate::git;
 use crate::pgp::*;
 use crate::signing;
 use crate::utils;
+use crate::config;
 use crate::utils::{Config, Operation};
 
 use curv::arithmetic::Converter;
@@ -121,7 +122,7 @@ fn keysign_stage<P: AsRef<Path>>(
         let y = keypair.y_sum_s.y_coor().unwrap().to_bytes();
         let mut message = Message::new();
 
-        message.new_public_key(
+        let keyid = message.new_public_key(
             PublicKey::ECDSA(CurveOID::Secp256k1, &x, &y),
             leader.clone(),
             email.clone(),
@@ -134,9 +135,10 @@ fn keysign_stage<P: AsRef<Path>>(
 
         let signature = signing::distributed_sign(channel, &hashable, &keypair).unwrap();
         let sig_data = encode_sig_data(signature);
-        message.finalize_signature(hashed, sig_data);
+        message.finalize_signature(hashed, keyid.clone(), sig_data);
 
         message.write_to_file(pgp_file)?;
+        config::write_keyid(&keyid)?;
     } else {
         println!("Started signing, with the operation: {:?}", op);
     }
@@ -156,6 +158,7 @@ pub fn leader_keygen(
     // TODO Get all of these from the arguments
     let participants = 4;
     let threshold = 2;
+
     let (keypair_file, pgp_keyfile) = if let Some(args) = args {
         let key_base_dir = &cfg::KEY_DIR.clone();
         let pgp_keyfile = Path::join(
@@ -275,11 +278,12 @@ pub fn leader_tag(channel: &mut Channel, config: &Config, args: Option<&ArgMatch
         hashable.append(&mut message.get_hashable());
 
         let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
+        let keyid = config::get_keyid()?;
 
         let signature = tag_signing_stage(channel, &hashable, keyfile)?;
         let sig_data = encode_sig_data(signature);
         let hash = &hash[hash.len() - 2..];
-        message.finalize_signature(hash, sig_data);
+        message.finalize_signature(hash, keyid, sig_data);
         let signature = message.get_formatted_message();
         let armor = armor_binary_output(&signature);
         tag_string.push_str(&armor);
