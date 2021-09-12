@@ -90,14 +90,14 @@ fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
         .participants
         .store(0, Ordering::SeqCst);
     // Reset the cache -> we can avoid doing any UUID-related operations
-    /* db.write()
+    db.write()
         .unwrap()
         .get_mut(&project_name)
         .unwrap()
         .cache
         .write()
         .unwrap()
-        .clear(); */
+        .clear();
 }
 
 #[post("/get", format = "json", data = "<request>")]
