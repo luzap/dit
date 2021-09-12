@@ -200,6 +200,8 @@ pub fn leader_keygen(
 
     keysign_stage(channel, &op, &keypair, pgp_keyfile)?;
 
+    channel.end_operation(&op);
+
     Ok(())
 }
 
