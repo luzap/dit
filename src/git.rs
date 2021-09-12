@@ -153,7 +153,6 @@ pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
 
     let mut hash_cmd = Command::new(GIT);
     hash_cmd.args(&["hash-object", "-t", "tag", "-w", ".temp"]);
-    fs::remove_file(".temp")?;
 
     let hash = hash_cmd.output()?;
 
