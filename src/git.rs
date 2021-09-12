@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::File;
-use std::io::prelude::Write;
+use std::io::Read;
+use std::io::prelude::{Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -149,20 +150,34 @@ pub fn create_tag_string(tag: &Tag) -> String {
 /// ```
 pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
     let mut hash_cmd = Command::new(GIT);
-    hash_cmd.args(&["hash-object", "-t", "tag", "-w", "--stdin", tag_body]);
-    let hash = hash_cmd.output()?;
+    hash_cmd.args(&["hash-object", "-t", "tag", "-w", "--stdin"]);
+    hash_cmd.stdin(Stdio::piped());
+   
+    let hash_child = hash_cmd.spawn()?;
 
-    if !hash.stdout.is_empty() {
-        let hash_string = parse_cmd_output(&hash.stdout)?;
-        let tag_pointer = Path::join(&TAG_PATH, tag_name);
+    match hash_child.stdin.unwrap().write_all(&tag_body.as_bytes()) {
+        Err(_) => println!("Could not write to child"),
+        Ok(_) => println!("Wrote to child!")
+    };
 
-        fs::write(tag_pointer, hash_string)?;
-        Ok(())
-    } else {
-        let command = format!("{:?}", hash_cmd);
-        let error = parse_cmd_output(&hash.stderr)?;
+    let mut output = String::new();
+    match hash_child.stdout.unwrap().read_to_string(&mut output) { 
+        Ok(_) => {
+            let tag_pointer = Path::join(&TAG_PATH, tag_name);
 
-        Err(CommandError::new(command, error).into())
+            let mut tag_file = File::create(tag_pointer)?;
+            tag_file.write(&output.as_bytes())?;
+            return Ok(());
+        }
+        Err(_) => match hash_child.stderr.unwrap().read_to_string(&mut output) {
+            Ok(_) => {
+                let command = format!("{:?}", hash_cmd);
+                let error = parse_cmd_output(&output.as_bytes())?;
+
+                return Err(CommandError::new(command, error).into())
+            },
+            _ => unreachable!()
+        }
     }
 }
 

@@ -35,8 +35,10 @@ pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
 pub fn get_keyid() -> Result<Vec<u8>> {
     let mut file = File::open(&LAST_KEYID.clone())?;
     let mut contents = vec![];
-    let size = file.read(& mut contents)?;
+    let size = file.read_to_end(&mut contents)?;
     assert_ne!(size, 0);
+    println!("file {:?}", file);
+    println!("contents {:?}", contents);
 
     Ok(contents)
 }
