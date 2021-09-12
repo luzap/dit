@@ -1,10 +1,13 @@
 use crate::errors;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::SignatureRecid;
+use curv::elliptic::curves::secp256_k1::{GE};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
 
 use std::fs;
 use std::path::{Path};
+
+
 
 // TODO What does the Recid mean?
 pub fn encode_sig_data(sig: SignatureRecid) -> SignatureData {
@@ -203,6 +206,7 @@ pub struct Message<'a> {
     packets: Vec<Packet<'a>>,
 }
 
+
 impl<'a> Message<'a> {
     pub fn new() -> Message<'a> {
         Message {
@@ -218,7 +222,7 @@ impl<'a> Message<'a> {
                 time,
             )));
     }
-    pub fn finalize_signature(&mut self, hash: &[u8], sig: SignatureData) -> &Message {
+    pub fn finalize_signature(&mut self, hash: &[u8], keyid: Vec<u8>, sig: SignatureData) -> &Message {
         let hash = if hash.len() > 0 {
             [hash[0], hash[1]]
         } else {
@@ -233,11 +237,6 @@ impl<'a> Message<'a> {
             // that the layer of abstraction is incorrect, but I'm not sure
             // what a better way of expressing it would be (could always make separate structs for
             // them)
-            let keyid = match &self.packets[0] {
-                Packet::PublicKey(pubkey) => pubkey.keyid(),
-                _ => unreachable!(),
-            };
-
             let mut signature = Signature::new(partial, hash, sig);
             signature.subpackets.push(SigSubpacket::KeyID(keyid));
             self.packets.push(Packet::Signature(signature));
@@ -254,9 +253,10 @@ impl<'a> Message<'a> {
         user: String,
         email: String,
         time: Duration,
-    ) -> &Message {
+    ) -> Vec<u8> {
         let public_key_packet = PKPacket::new(pubkey, Some(time));
         let fingerprint = public_key_packet.fingerprint();
+        let keyid = public_key_packet.keyid();
 
         self.packets.push(Packet::PublicKey(public_key_packet));
         self.packets.push(Packet::UserID(UserID { user, email }));
@@ -289,7 +289,7 @@ impl<'a> Message<'a> {
         ]);
 
         self.packets.push(Packet::PartialSignature(partial));
-        self
+        keyid 
     }
 
     pub fn get_hashable(&self) -> Vec<u8> {

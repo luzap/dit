@@ -1,6 +1,7 @@
 use std::fs;
 use std::convert::AsRef;
 use std::path::{Path, PathBuf};
+use crate::errors::Result;
 
 use crate::git;
 use crate::utils;
@@ -10,6 +11,7 @@ use lazy_static::lazy_static;
 lazy_static! {
     pub static ref KEY_DIR: PathBuf = Path::join(&git::GIT_DIR, ".dit");
     pub static ref LOCAL_CONFIG: PathBuf = Path::join(&git::GIT_DIR, "config.toml");
+    pub static ref LAST_KEYID: PathBuf = Path::join(&KEY_DIR, "keyid");
 }
 
 pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
@@ -28,6 +30,13 @@ pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
     }
 }
 
+pub fn get_keyid() -> Result<Vec<u8>> {
+    Ok(fs::read_to_string(&LAST_KEYID.clone())?.as_bytes().to_vec())
+}
+
+pub fn write_keyid(keyid: &[u8]) -> Result<()> {
+    Ok(fs::write(&LAST_KEYID.clone(), keyid)?)
+}
 
 
 
