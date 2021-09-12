@@ -1,7 +1,6 @@
 use std::fs;
 use std::fs::File;
-use std::io::Read;
-use std::io::prelude::{Write};
+use std::io::prelude::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -133,7 +132,7 @@ pub fn get_git_tag_message(tag: &str) -> Result<String> {
 
 pub fn create_tag_string(tag: &Tag) -> String {
     format!(
-        "object {}\ntype commit \ntag {}\ntagger {} <{}> {} {}\n\n{}\n",
+        "object {}\ntype commit\ntag {}\ntagger {} <{}> {} {}\n\n{}\n",
         tag.commit, tag.name, tag.creator, tag.email, tag.epoch, tag.timezone, tag.message
     )
 }
@@ -149,35 +148,25 @@ pub fn create_tag_string(tag: &Tag) -> String {
 /// echo -e "object $(git rev-parse HEAD~1)\ntype commit\ntag 0.1\ntagger Lukas Zapolskas <lukas.zapolskas@gmail.com> $(date +%s) +0100\n\nDoing a test tag" > temp.txt && gpg -bsa -o- temp.txt >> temp.txt && git hash-object -w -t tag temp.txt > .git/refs/tags/0.1
 /// ```
 pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
+    let mut temp_file = File::create(".temp")?;
+    temp_file.write_all(&tag_body.as_bytes())?;
+
     let mut hash_cmd = Command::new(GIT);
-    hash_cmd.args(&["hash-object", "-t", "tag", "-w", "--stdin"]);
-    hash_cmd.stdin(Stdio::piped());
-   
-    let hash_child = hash_cmd.spawn()?;
+    hash_cmd.args(&["hash-object", "-t", "tag", "-w", ".temp"]);
+    let hash = hash_cmd.output()?;
 
-    match hash_child.stdin.unwrap().write_all(&tag_body.as_bytes()) {
-        Err(_) => println!("Could not write to child"),
-        Ok(_) => println!("Wrote to child!")
-    };
+    if !hash.stdout.is_empty() {
+        let hash_string = parse_cmd_output(&hash.stdout)?;
+        let tag_pointer = Path::join(&TAG_PATH, tag_name);
 
-    let mut output = String::new();
-    match hash_child.stdout.unwrap().read_to_string(&mut output) { 
-        Ok(_) => {
-            let tag_pointer = Path::join(&TAG_PATH, tag_name);
+        let mut tag_file = File::create(tag_pointer)?;
+        tag_file.write(&hash_string.as_bytes())?;
+        Ok(())
+    } else {
+        let command = format!("{:?}", hash_cmd);
+        let error = parse_cmd_output(&hash.stderr)?;
 
-            let mut tag_file = File::create(tag_pointer)?;
-            tag_file.write(&output.as_bytes())?;
-            return Ok(());
-        }
-        Err(_) => match hash_child.stderr.unwrap().read_to_string(&mut output) {
-            Ok(_) => {
-                let command = format!("{:?}", hash_cmd);
-                let error = parse_cmd_output(&output.as_bytes())?;
-
-                return Err(CommandError::new(command, error).into())
-            },
-            _ => unreachable!()
-        }
+        Err(CommandError::new(command, error).into())
     }
 }
 
