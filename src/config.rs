@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::File;
+use std::io::prelude::{Write, Read};
 use std::convert::AsRef;
 use std::path::{Path, PathBuf};
 use crate::errors::Result;
@@ -31,11 +33,18 @@ pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
 }
 
 pub fn get_keyid() -> Result<Vec<u8>> {
-    Ok(fs::read_to_string(&LAST_KEYID.clone())?.as_bytes().to_vec())
+    let mut file = File::open(&LAST_KEYID.clone())?;
+    let mut contents = vec![];
+    file.read(& mut contents)?;
+
+    Ok(contents)
 }
 
 pub fn write_keyid(keyid: &[u8]) -> Result<()> {
-    Ok(fs::write(&LAST_KEYID.clone(), keyid)?)
+    let mut file = File::create(&LAST_KEYID.clone())?;
+    file.write(keyid)?;
+
+    Ok(())
 }
 
 
