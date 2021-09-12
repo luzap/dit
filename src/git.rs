@@ -132,7 +132,7 @@ pub fn get_git_tag_message(tag: &str) -> Result<String> {
 
 pub fn create_tag_string(tag: &Tag) -> String {
     format!(
-        "object {}\ntype commit \ntag {}\ntagger {} {} {} {}\n\n{}\n",
+        "object {}\ntype commit \ntag {}\ntagger {} <{}> {} {}\n\n{}\n",
         tag.commit, tag.name, tag.creator, tag.email, tag.epoch, tag.timezone, tag.message
     )
 }
