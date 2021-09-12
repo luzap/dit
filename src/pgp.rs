@@ -1,13 +1,11 @@
 use crate::errors;
+use curv::elliptic::curves::secp256_k1::GE;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::SignatureRecid;
-use curv::elliptic::curves::secp256_k1::{GE};
 use std::ops::Index;
 use std::time::{Duration, SystemTime};
 
 use std::fs;
-use std::path::{Path};
-
-
+use std::path::Path;
 
 // TODO What does the Recid mean?
 pub fn encode_sig_data(sig: SignatureRecid) -> SignatureData {
@@ -81,6 +79,25 @@ fn duration_to_bytes(duration: Duration) -> Vec<u8> {
     duration.as_secs().to_be_bytes()[4..].to_vec()
 }
 
+const CRC24_INIT: u64 = 0xB704CE;
+const CRC24_POLY: u64 = 0x1864CFB;
+
+fn compute_crc(buffer: &[u8]) -> u64 {
+    let mut crc = CRC24_INIT;
+
+    for byte in buffer.iter() {
+        crc ^= (*byte as u64) << 16u64;
+        for _ in 0..8 {
+            crc <<= 1;
+            if crc & 0x1000000 > 0 {
+                crc ^= CRC24_POLY;
+            }
+        }
+    }
+
+    return crc & 0xFFFFFF;
+}
+
 /// Format an OpenPGP message into an ASCII-armored format.
 ///
 /// Armor header line, with a string surrounded by five dashes on either size of
@@ -91,10 +108,16 @@ fn duration_to_bytes(duration: Duration) -> Vec<u8> {
 pub fn armor_binary_output(buffer: &[u8]) -> String {
     let mut armor = String::new();
 
+    let radix64 = binary_to_radix64(buffer);
+    let crc = binary_to_radix64(&compute_crc(&buffer).to_be_bytes()[0..3]);
+
     armor.push_str("-----BEGIN PGP SIGNATURE-----\n\n");
-    let encoded = String::from_utf8(binary_to_radix64(buffer)).unwrap();
+    let encoded = String::from_utf8(radix64).unwrap();
     armor.push_str(&encoded);
-    armor.push_str("\n\n-----END PGP SIGNATURE-----\n");
+    let encoded_crc = String::from_utf8(crc.to_vec()).unwrap();
+    armor.push_str(&encoded_crc);
+
+    armor.push_str("\n-----END PGP SIGNATURE-----\n");
 
     armor
 }
@@ -206,7 +229,6 @@ pub struct Message<'a> {
     packets: Vec<Packet<'a>>,
 }
 
-
 impl<'a> Message<'a> {
     pub fn new() -> Message<'a> {
         Message {
@@ -222,7 +244,12 @@ impl<'a> Message<'a> {
                 time,
             )));
     }
-    pub fn finalize_signature(&mut self, hash: &[u8], keyid: Vec<u8>, sig: SignatureData) -> &Message {
+    pub fn finalize_signature(
+        &mut self,
+        hash: &[u8],
+        keyid: Vec<u8>,
+        sig: SignatureData,
+    ) -> &Message {
         let hash = if hash.len() > 0 {
             [hash[0], hash[1]]
         } else {
@@ -289,7 +316,7 @@ impl<'a> Message<'a> {
         ]);
 
         self.packets.push(Packet::PartialSignature(partial));
-        keyid 
+        keyid
     }
 
     pub fn get_hashable(&self) -> Vec<u8> {
