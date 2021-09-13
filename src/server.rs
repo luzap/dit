@@ -114,6 +114,7 @@ fn get(
 ) -> Json<Result<Entry, ()>> {
     let (project_name, index) = request.into_inner();
 
+    println!("Index: {:?}", index);
     // TODO I don't like holding the lock for so long but it seems necessary
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();

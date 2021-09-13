@@ -292,6 +292,9 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
         git::create_git_tag(&tag_name, &tag_string)?;
 
         channel.end_operation(&op);
+
+        sleep(Duration::from_millis(500));
+
         channel.clear();
     }
 
