@@ -6,16 +6,16 @@ use std::time::Duration;
 // TODO Get rid of this -> maybe some sort of notification for the state change?
 use std::thread::sleep;
 
-use crate::comm::Channel;
+use crate::comm::HTTPChannel;
 use crate::comm::PartyKeyPair;
 use crate::config as cfg;
+use crate::config;
 use crate::dkg;
 use crate::errors::Result;
 use crate::git;
 use crate::pgp::*;
 use crate::signing;
 use crate::utils;
-use crate::config;
 use crate::utils::{Config, Operation};
 
 use curv::arithmetic::Converter;
@@ -87,7 +87,7 @@ pub fn build_app() -> App<'static, 'static> {
 /// # Warning
 /// Will fail on protocol, network and local file system errors
 ///
-fn keygen_stage<P: AsRef<Path>>(channel: &mut Channel, keypair_file: P) -> Result<PartyKeyPair> {
+fn keygen_stage<P: AsRef<Path>>(channel: &HTTPChannel, keypair_file: P) -> Result<PartyKeyPair> {
     let keypair = dkg::distributed_keygen(channel).unwrap();
 
     println!("{:?}", keypair_file.as_ref());
@@ -105,7 +105,7 @@ fn keygen_stage<P: AsRef<Path>>(channel: &mut Channel, keypair_file: P) -> Resul
 /// legitimate PGP public keys to all parties (maybe the server should be a keyserver?)
 ///
 fn keysign_stage<P: AsRef<Path>>(
-    channel: &mut Channel,
+    channel: &HTTPChannel,
     op: &Operation,
     keypair: &PartyKeyPair,
     pgp_file: P,
@@ -151,7 +151,7 @@ fn keysign_stage<P: AsRef<Path>>(
 ///
 /// The leader is the only party that should change the state of an existing operation
 pub fn leader_keygen(
-    channel: &mut Channel,
+    channel: &HTTPChannel,
     config: &Config,
     args: Option<&ArgMatches>,
 ) -> Result<()> {
@@ -204,11 +204,12 @@ pub fn leader_keygen(
     keysign_stage(channel, &op, &keypair, pgp_keyfile)?;
 
     channel.end_operation(&op);
+    channel.clear();
 
     Ok(())
 }
 
-pub fn participant_keygen(channel: &mut Channel, op: &Operation) -> Result<()> {
+pub fn participant_keygen(channel: &HTTPChannel, op: &Operation) -> Result<()> {
     // TODO Change the name of the default keyfile
     let key_base_dir = &cfg::KEY_DIR.clone();
     let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
@@ -217,13 +218,14 @@ pub fn participant_keygen(channel: &mut Channel, op: &Operation) -> Result<()> {
 
     let keypair = keygen_stage(channel, keypair_file)?;
 
-    // How do we do a spinlock?
     let new_op = loop {
         let new_op = channel.get_current_operation();
-        if matches!(new_op, Operation::SignKey{ .. }) {
-           break new_op; 
-        } else {
-            sleep(Duration::from_millis(250));
+        if let Ok(op) = new_op {
+            if matches!(op, Operation::SignKey { .. }) {
+                break op;
+            } else {
+                sleep(Duration::from_millis(250));
+            }
         }
     };
     keysign_stage(channel, &new_op, &keypair, pgp_keyfile)?;
@@ -231,7 +233,7 @@ pub fn participant_keygen(channel: &mut Channel, op: &Operation) -> Result<()> {
     Ok(())
 }
 
-pub fn leader_tag(channel: &mut Channel, config: &Config, args: Option<&ArgMatches>) -> Result<()> {
+pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatches>) -> Result<()> {
     if let Some(args) = args {
         let commit = args.value_of("commit").unwrap_or("HEAD");
         let tag_name = args.value_of("tag name").unwrap();
@@ -273,7 +275,6 @@ pub fn leader_tag(channel: &mut Channel, config: &Config, args: Option<&ArgMatch
         let mut message = Message::new();
         message.new_signature(signing_time);
 
-        // TODO This API is rather nasty
         let mut hashable = tag_string.as_bytes().to_vec();
         hashable.append(&mut message.get_hashable());
 
@@ -289,13 +290,16 @@ pub fn leader_tag(channel: &mut Channel, config: &Config, args: Option<&ArgMatch
         tag_string.push_str(&armor);
 
         git::create_git_tag(&tag_name, &tag_string)?;
+
+        channel.end_operation(&op);
+        channel.clear();
     }
 
     Ok(())
 }
 
 fn tag_signing_stage<P: AsRef<Path>>(
-    channel: &mut Channel,
+    channel: &HTTPChannel,
     message: &[u8],
     keyfile: P,
 ) -> Result<SignatureRecid> {
@@ -303,7 +307,7 @@ fn tag_signing_stage<P: AsRef<Path>>(
     Ok(signing::distributed_sign(channel, message, &keypair).unwrap())
 }
 
-pub fn participant_tag(channel: &mut Channel, op: &Operation) -> Result<()> {
+pub fn participant_tag(channel: &HTTPChannel, op: &Operation) -> Result<()> {
     let (participants, threshold, tag) = match op {
             Operation::SignTag {
                 participants, threshold, tag } => (participants, threshold, tag),

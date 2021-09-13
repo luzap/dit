@@ -145,7 +145,7 @@ pub fn create_tag_string(tag: &Tag) -> String {
 ///
 /// When testing, the following command produces a functional tag:
 /// ```bash
-/// echo -e "object $(git rev-parse HEAD~1)\ntype commit\ntag 0.1\ntagger Lukas Zapolskas <lukas.zapolskas@gmail.com> $(date +%s) +0100\n\nDoing a test tag" > temp.txt && gpg -bsa -o- temp.txt >> temp.txt && git hash-object -w -t tag temp.txt > .git/refs/tags/0.1
+/// echo -e "object $(git rev-parse HEAD~1)\ntype commit\ntag 0.1\ntagger Name Surname <name.surname@email.com> $(date +%s) +0100\n\nDoing a test tag" > temp.txt && gpg -bsa -o- temp.txt >> temp.txt && git hash-object -w -t tag temp.txt > .git/refs/tags/0.1
 /// ```
 pub fn create_git_tag(tag_name: &str, tag_body: &str) -> Result<()> {
     let mut temp_file = File::create(".temp")?;

@@ -14,11 +14,10 @@ use multi_party_ecdsa::utilities::mta::{MessageA, MessageB};
 
 use paillier::*;
 
-use crate::comm::Channel;
-// use crate::errors::Result;
+use crate::comm::HTTPChannel;
 
 pub fn distributed_sign(
-    channel: &Channel,
+    channel: &HTTPChannel,
     message: &[u8],
     keypair: &PartyKeyPair,
 ) -> Result<SignatureRecid, ()> {
