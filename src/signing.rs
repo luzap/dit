@@ -26,7 +26,10 @@ pub fn distributed_sign(
         share_count: 4,
     };
 
-    let party_num_int = channel.signup_sign().unwrap();
+    let party_num_int = match channel.signup_sign() {
+        Ok(index) => index,
+        Err(_) => return Err(())
+    };
 
     channel
         .broadcast(
@@ -299,14 +302,6 @@ pub fn distributed_sign(
     };
 
     let res_stage7 = sign_stage7(&input_stage7).expect("sign stage 7 failed");
-
-    // TODO Remove this in the release version
-    check_sig(
-        &res_stage7.local_sig.r,
-        &res_stage7.local_sig.s,
-        &message,
-        &keypair.y_sum_s,
-    );
 
     Ok(res_stage7.local_sig)
 }

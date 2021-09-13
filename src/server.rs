@@ -76,7 +76,7 @@ fn get_operation(
 // TODO Maybe we should be checking how many participants there are?
 // Figure out how to best share that state between threads
 #[post("/end-operation", format = "json", data = "<request>")]
-fn end_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<(String, usize)>) {
+fn end_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<(String, Operation)>) {
     let (project_name, _) = request.into_inner();
 
     // Reset project operation
@@ -197,7 +197,10 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(S
             threshold,
             ..
         } => threshold,
-        _ => panic!("Trying to register for signatures when everything is not yet done!"),
+        _ => {
+            println!("op: {:?}", op); 
+            panic!("Trying to register for signatures when everything is not yet done!");
+        }
     } as usize;
 
     let participants = &project.participants;
@@ -212,6 +215,8 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(S
     } else {
         Err(())
     };
+
+    println!("res: {:?}", res);
 
     Json(res)
 }

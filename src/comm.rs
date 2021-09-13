@@ -185,7 +185,7 @@ impl HTTPChannel {
 
     pub fn get_current_operation(&self) -> Result<Operation, ProtocolError> {
         match &self.postb("get-operation", 0) {
-            Some(res) => serde_json::from_str(&res).unwrap(),
+            Some(res) => Ok(serde_json::from_str(&res).unwrap()),
             None => Err(ProtocolError::Connection)
         }
     }
@@ -207,6 +207,8 @@ impl HTTPChannel {
         let key = "signup-sign".to_string();
 
         let res_body: String = self.postb("signupsign", key).unwrap();
+
+        println!("Res body: {:?}", res_body);
         let res_body: Result<PartySignup, ()> = serde_json::from_str(&res_body).unwrap();
 
         if let Ok(res) = res_body {
