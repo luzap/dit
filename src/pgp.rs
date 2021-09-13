@@ -115,9 +115,9 @@ pub fn armor_binary_output(buffer: &[u8]) -> String {
     let encoded = String::from_utf8(radix64).unwrap();
     armor.push_str(&encoded);
     armor.push('\n');
-    let encoded_crc = String::from_utf8(crc.to_vec()).unwrap();
+    /* let encoded_crc = String::from_utf8(crc.to_vec()).unwrap();
     armor.push('=');
-    armor.push_str(&encoded_crc);
+    armor.push_str(&encoded_crc); */
 
     armor.push_str("\n-----END PGP SIGNATURE-----\n");
 
