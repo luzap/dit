@@ -1,4 +1,4 @@
-use crate::comm::{Channel, PartyKeyPair};
+use crate::comm::{HTTPChannel, PartyKeyPair};
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
     keygen_stage1, keygen_stage2, keygen_stage3, keygen_stage4, KeyGenStage1Input,
@@ -14,7 +14,7 @@ use curv::elliptic::curves::secp256_k1::{FE, GE};
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen(channel: &Channel) -> Result<PartyKeyPair, ()> {
+pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
     // TODO Get rid of this
     let params = Parameters {
         threshold: 2,

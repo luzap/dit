@@ -154,11 +154,12 @@ impl Error for CriticalError {
     }
 }
 
-#[derive(Serialize, Deserialize, )]
-enum ProtocolError {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ProtocolError {
     Timeout,
     Connection,
-    Blame
+    Blame,
+    Full
 }
 
 

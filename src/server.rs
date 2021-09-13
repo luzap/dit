@@ -15,9 +15,12 @@ use dit::utils::Operation;
 // TODO Start handling server errors
 
 #[post("/start-operation", format = "json", data = "<request>")]
-fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Operation>) {
+fn start_operation(
+    db: State<RwLock<HashMap<String, Project>>>,
+    request: Json<(String, Operation)>,
+) {
     // TODO Remove this
-    let project_name = "project".to_owned();
+    let (project_name, new_operation) = request.into_inner();
 
     let (operation, exists) = {
         let read_db = db.read().unwrap();
@@ -26,9 +29,6 @@ fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Op
             None => (Arc::new(Operation::Idle), false),
         }
     };
-
-    // We don't want to handle interrupted operations at this point
-    let new_operation = request.0;
 
     let new_operation = match *operation {
         Operation::Idle => Arc::new(new_operation),
@@ -54,9 +54,12 @@ fn start_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<Op
     };
 }
 
-#[post("/get-operation", format = "json")]
-fn get_operation(db: State<RwLock<HashMap<String, Project>>>) -> Json<Operation> {
-    let project_name = "project".to_owned();
+#[post("/get-operation", format = "json", data = "<request>")]
+fn get_operation(
+    db: State<RwLock<HashMap<String, Project>>>,
+    request: Json<(String, usize)>,
+) -> Json<Operation> {
+    let (project_name, _) = request.into_inner();
 
     let read_db = db.read().unwrap();
 
@@ -72,9 +75,9 @@ fn get_operation(db: State<RwLock<HashMap<String, Project>>>) -> Json<Operation>
 
 // TODO Maybe we should be checking how many participants there are?
 // Figure out how to best share that state between threads
-#[post("/end-operation", format = "json")]
-fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
-    let project_name = "project".to_owned();
+#[post("/end-operation", format = "json", data = "<request>")]
+fn end_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<(String, usize)>) {
+    let (project_name, _) = request.into_inner();
 
     // Reset project operation
     db.write()
@@ -91,15 +94,26 @@ fn end_operation(db: State<RwLock<HashMap<String, Project>>>) {
         .store(0, Ordering::SeqCst);
 }
 
+#[post("/clear", format = "json", data = "<request>")]
+fn clear(db: State<RwLock<HashMap<String, Project>>>, request: Json<(String, usize)>) {
+    let (project_name, _) = request.into_inner();
+    db.write()
+        .unwrap()
+        .get_mut(&project_name)
+        .unwrap()
+        .cache
+        .write()
+        .unwrap()
+        .clear()
+}
+
 #[post("/get", format = "json", data = "<request>")]
 fn get(
     db_mtx: State<RwLock<HashMap<String, Project>>>,
-    request: Json<Index>,
+    request: Json<(String, Index)>,
 ) -> Json<Result<Entry, ()>> {
-    let project_name = "project".to_owned();
-    let index: Index = request.0;
+    let (project_name, index) = request.into_inner();
 
-    println!("Getting index: {:?}", index);
     // TODO I don't like holding the lock for so long but it seems necessary
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();
@@ -121,12 +135,9 @@ fn get(
 #[post("/set", format = "json", data = "<request>")]
 fn set(
     db_mtx: State<RwLock<HashMap<String, Project>>>,
-    request: Json<Entry>,
+    request: Json<(String, Entry)>,
 ) -> Json<Result<(), ()>> {
-    let project_name = "project".to_owned();
-
-    let entry: Entry = request.0;
-
+    let (project_name, entry) = request.into_inner();
 
     println!("Getting index: {:?}", entry);
     let hm = db_mtx.write().unwrap();
@@ -137,10 +148,12 @@ fn set(
     Json(Ok(()))
 }
 
-#[post("/signupkeygen", format = "json")]
-fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<PartySignup, ()>> {
-    // TODO Need the
-    let project_name = "project".to_owned();
+#[post("/signupkeygen", format = "json", data = "<request>")]
+fn signup_keygen(
+    db_mtx: State<RwLock<HashMap<String, Project>>>,
+    request: Json<(String, String)>,
+) -> Json<Result<PartySignup, ()>> {
+    let (project_name, _) = request.into_inner();
 
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();
@@ -151,7 +164,6 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result
         _ => return Json(Err(())),
     } as usize;
     let participants = &project.participants;
-
 
     let res = if participants.load(Ordering::SeqCst) < parties {
         let index = participants.fetch_add(1, Ordering::SeqCst) + 1;
@@ -166,9 +178,9 @@ fn signup_keygen(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result
     Json(res)
 }
 
-#[post("/signupsign", format = "json")]
-fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>) -> Json<Result<PartySignup, ()>> {
-    let project_name = "project".to_owned();
+#[post("/signupsign", format = "json", data = "<request>")]
+fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(String, String)>) -> Json<Result<PartySignup, ()>> {
+    let (project_name, _) = request.into_inner();
 
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();
@@ -214,7 +226,6 @@ fn main() {
     let projects: HashMap<String, Project> = HashMap::with_capacity(1);
     let db_mtx = RwLock::new(projects);
 
-    // TODO Add logging and TLS
     rocket::ignite()
         .mount(
             "/",
@@ -226,6 +237,7 @@ fn main() {
                 start_operation,
                 end_operation,
                 get_operation,
+                clear
             ],
         )
         .manage(db_mtx)
