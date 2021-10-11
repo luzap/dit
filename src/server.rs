@@ -75,6 +75,7 @@ fn get_operation(
 
 // TODO Maybe we should be checking how many participants there are?
 // Figure out how to best share that state between threads
+// Think about the best way of handling the number of participants
 #[post("/end-operation", format = "json", data = "<request>")]
 fn end_operation(db: State<RwLock<HashMap<String, Project>>>, request: Json<(String, Operation)>) {
     let (project_name, _) = request.into_inner();
@@ -206,7 +207,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(S
 
     let participants = &project.participants;
 
-    println!("participants: {}", participants.load(Ordering::SeqCst));
     let res = if participants.load(Ordering::SeqCst) < threshold + 1 {
         let index = participants.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -216,8 +216,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(S
     } else {
         Err(())
     };
-
-    println!("res: {:?}", res);
 
     Json(res)
 }

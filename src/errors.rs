@@ -5,7 +5,7 @@ use std::io;
 use std::string;
 use std::time;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct CommandError {
@@ -73,21 +73,36 @@ impl fmt::Display for CriticalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CriticalError::FileSystem(ref err) => {
-                // TODO Is there anything else that can be done here?
-                let error_kind = err.kind();
+                let description = err.to_string();
+                let inner = err.into_inner();
 
-                write!(f, "[File System]:\t{:?}, {}", error_kind, err)
+                // TODO Anything else that can be done to simplify this?
+                // Also, what can be done to make it work...
+                // Rust formatting is a little bit arcane
+                let root_cause: &str = if let Some(cause) = inner {
+                    if let Some(error) = inner {
+                        format!("caused by {}", *error)
+                    } else {
+                        String::from("")
+                    }
+                } else {
+                    String::from("")
+                };
+
+                write!(f, "[File System]:\t {} {}", description, root_cause)
             }
             // TODO Right now, this error does not actually exist
             CriticalError::Network => write!(f, "[{:10?}]", self),
             CriticalError::JSON(ref err) => {
-                // TODO The error context contains an `ErrorCode` enum which is *a lot* more
-                // descriptive than this, and yet it does not seem to be exposed. Is there
-                // anything we can do to get better error messages?
-                // Furthermore, would it be possible to get the underlying problematic data
+                let error_type = match err.classify() {
+                    serde_json::error::Category::Io => "IO",
+                    serde_json::error::Category::Syntax => "Syntax",
+                    serde_json::error::Category::Data => "Data",
+                    serde_json::error::Category::Eof => "End of file",
+                };
                 let error_context = format!(
                     "{:?} error: line {}, col {}",
-                    err.classify(),
+                    error_type,
                     err.line(),
                     err.column()
                 );
@@ -159,10 +174,8 @@ pub enum ProtocolError {
     Timeout,
     Connection,
     Blame,
-    Full
+    Full,
 }
-
-
 
 pub fn unwrap_or_exit<T>(wrapped: Result<T>) -> T {
     match wrapped {
@@ -173,6 +186,3 @@ pub fn unwrap_or_exit<T>(wrapped: Result<T>) -> T {
         }
     }
 }
-
-
-

@@ -7,6 +7,8 @@ use std::time::{Duration, SystemTime};
 use std::fs;
 use std::path::Path;
 
+use crate::hashes;
+
 // TODO What does the Recid mean?
 pub fn encode_sig_data(sig: SignatureRecid) -> SignatureData {
     use curv::arithmetic::traits::Converter;
@@ -227,6 +229,9 @@ fn format_ec_point(buffer: &mut Vec<u8>, x: &[u8], y: &[u8]) {
 /// (which have to either be followed by a `Signature` packet or a `UserID` packet
 /// which is then followed by the `Signature` packet (thus attesting to either the
 /// owner of the key or the key itself(?))
+///
+/// # TODO The current API for this is flat out horrible. Might as well make different packet types
+/// that are aware of the content, without having to do some generic check nonsense
 pub struct Message<'a> {
     packets: Vec<Packet<'a>>,
 }

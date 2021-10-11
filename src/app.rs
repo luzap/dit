@@ -149,7 +149,8 @@ fn keysign_stage<P: AsRef<Path>>(
 /// Initiates the key generation operation and controls its subsequent control flow
 /// by sending the appropriate operations to the server.
 ///
-/// The leader is the only party that should change the state of an existing operation
+/// The leader is the only party that should be able to change the state of an 
+/// existing operation
 pub fn leader_keygen(
     channel: &HTTPChannel,
     config: &Config,
@@ -159,8 +160,14 @@ pub fn leader_keygen(
     let participants = 4;
     let threshold = 2;
 
+    let key_base_dir = &cfg::KEY_DIR.clone();
+
+    // Initialize the directory upon first call
+    if *cfg::INITIALIZED == false {
+        fs::create_dir_all(key_base_dir)?
+    };
+
     let (keypair_file, pgp_keyfile) = if let Some(args) = args {
-        let key_base_dir = &cfg::KEY_DIR.clone();
         let pgp_keyfile = Path::join(
             &key_base_dir,
             args.value_of("keyfile").unwrap_or("keyfile.pgp"),
@@ -209,12 +216,16 @@ pub fn leader_keygen(
     Ok(())
 }
 
-pub fn participant_keygen(channel: &HTTPChannel, op: &Operation) -> Result<()> {
+pub fn participant_keygen(channel: &HTTPChannel, _: &Operation) -> Result<()> {
     // TODO Change the name of the default keyfile
     let key_base_dir = &cfg::KEY_DIR.clone();
-    let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
 
+    let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
     let keypair_file = Path::join(&key_base_dir, "public_key.json");
+
+    if *cfg::INITIALIZED == false {
+        fs::create_dir_all(key_base_dir)?
+    };
 
     let keypair = keygen_stage(channel, keypair_file)?;
 
@@ -224,10 +235,12 @@ pub fn participant_keygen(channel: &HTTPChannel, op: &Operation) -> Result<()> {
             if matches!(op, Operation::SignKey { .. }) {
                 break op;
             } else {
+                // TODO How do we get rid of this?
                 sleep(Duration::from_millis(250));
             }
         }
     };
+
     keysign_stage(channel, &new_op, &keypair, pgp_keyfile)?;
 
     Ok(())
@@ -264,12 +277,20 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
 
         let mut tag_string = git::create_tag_string(&tag);
 
+        // TODO Get this from the config file or from the server: the server solution
+        // would require for the server to have persistent memory, which is outside 
+        // of what we use right now, but the other variant might be vulnerable to 
+        // interference from a malicious developer trying to create the keys
         let op = Operation::SignTag {
             participants: 4,
             threshold: 2,
             tag,
         };
 
+        // TODO The way the current channel interface is structured seems to 
+        // be somewhat problematic. Maybe it's best to create a channel as a 
+        // data object and then pass it to functions that use type bounds on 
+        // the interface?
         channel.start_operation(&op);
 
         let mut message = Message::new();
@@ -293,6 +314,7 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
 
         channel.end_operation(&op);
 
+        // TODO How do we get rid of all sleeps?
         sleep(Duration::from_millis(500));
 
         channel.clear();
@@ -338,8 +360,8 @@ pub fn participant_tag(channel: &HTTPChannel, op: &Operation) -> Result<()> {
 ///
 /// # Warning
 /// `OsString` does not always contain valid Unicode, and the conversion to Rust strings
-/// may fail. Currently, `clap` takes all invalid Unicode input as erroneous, so this condition
-/// should never trigger.
+/// may fail. Our `clap` configuration takes all invalid Unicode input as erroneous, 
+/// so this condition should never trigger.
 pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()> {
     let mut argv: Vec<&str> = Vec::new();
 

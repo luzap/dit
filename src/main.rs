@@ -27,7 +27,7 @@ fn main() -> Result<()> {
             reachable = true;
             pending_operation = op;
         }
-        Err(e) => println!("No connection to server"),
+        Err(_) => println!("No connection to server"),
     };
 
     match app.get_matches().subcommand() {

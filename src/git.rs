@@ -57,6 +57,7 @@ pub fn get_repo_root() -> Result<String> {
     parse_cmd_output(&repo_root.stdout)
 }
 
+
 pub fn get_commit_hash(commit: &str) -> Result<String> {
     let mut commit_cmd = Command::new(GIT);
     commit_cmd.args(&["rev-parse", commit]);

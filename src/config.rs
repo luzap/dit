@@ -12,6 +12,7 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref KEY_DIR: PathBuf = Path::join(&git::GIT_DIR, ".dit");
+    pub static ref INITIALIZED: bool = KEY_DIR.exists();
     pub static ref LOCAL_CONFIG: PathBuf = Path::join(&git::GIT_DIR, "config.toml");
     pub static ref LAST_KEYID: PathBuf = Path::join(&KEY_DIR, "keyid");
 }
@@ -35,12 +36,13 @@ pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
 pub fn get_keyid() -> Result<Vec<u8>> {
     let mut file = File::open(&LAST_KEYID.clone())?;
     let mut contents = vec![];
-    let size = file.read_to_end(&mut contents)?;
+    let _ = file.read_to_end(&mut contents)?;
 
     Ok(contents)
 }
 
 pub fn write_keyid(keyid: &[u8]) -> Result<()> {
+
     let mut file = File::create(&LAST_KEYID.clone())?;
     file.write(keyid)?;
 

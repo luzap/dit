@@ -7,3 +7,4 @@ pub mod errors;
 pub mod dkg;
 pub mod signing;
 pub mod comm;
+pub mod hashes;

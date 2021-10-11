@@ -87,9 +87,6 @@ pub fn read_data_from_file<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Resu
 }
 
 pub fn get_user_choice(prompt: &str, choices: &[&str]) -> Result<usize> {
-    if choices.len() < 2 {
-        unimplemented!()
-    }
     let mut input = String::with_capacity(choices[0].len());
     // Indicating that the default choice is the first one 
     let default_choice = format!("{}/{}", choices[0], choices[1..].join("/"));
