@@ -5,6 +5,7 @@ use std::io;
 use std::string;
 use std::time;
 
+use toml::de::Error as TOMLError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -55,11 +56,14 @@ impl fmt::Display for UserError {
 
 impl Error for UserError {}
 
+// TODO Merge the errors for the JSON and TOML decoding, since they're technically
+// decoding errors
 #[derive(Debug)]
 pub enum CriticalError {
     FileSystem(std::io::Error),
     Network,
     JSON(serde_json::Error),
+    TOML(TOMLError),
     HTTP(reqwest::Error),
     Encoding(string::FromUtf8Error),
     Command(CommandError),
@@ -74,23 +78,14 @@ impl fmt::Display for CriticalError {
         match self {
             CriticalError::FileSystem(ref err) => {
                 let description = err.to_string();
-                let inner = err.into_inner();
+                let err_ref = err.get_ref();
 
-                // TODO Anything else that can be done to simplify this?
-                // Also, what can be done to make it work...
-                // Rust formatting is a little bit arcane
-                let root_cause: &str = if let Some(cause) = inner {
-                    if let Some(error) = inner {
-                        format!("caused by {}", *error)
-                    } else {
-                        String::from("")
-                    }
+                if let Some(cause) = err_ref {
+                        write!(f, "[File System]:\t {} caused by {}", description, cause)
                 } else {
-                    String::from("")
-                };
-
-                write!(f, "[File System]:\t {} {}", description, root_cause)
-            }
+                        write!(f, "[File System]:\t {}", description)
+                }
+            },
             // TODO Right now, this error does not actually exist
             CriticalError::Network => write!(f, "[{:10?}]", self),
             CriticalError::JSON(ref err) => {
@@ -107,7 +102,16 @@ impl fmt::Display for CriticalError {
                     err.column()
                 );
                 write!(f, "[JSON]\t{}", error_context)
-            }
+            },
+            CriticalError::TOML(ref err) => {
+                if let Some((line, col)) = err.line_col() {
+
+                    write!(f, "[TOML]\t Decoding error at line {}, col {}: {}", line, col, err)
+                } else {
+                        write!(f, "[TOML]\t Decoding error {}", err)
+                    }
+
+            },
             CriticalError::HTTP(ref err) => write!(f, "[HTTP]\t{}", err.get_ref().unwrap()),
             CriticalError::Encoding(ref err) => write!(f, "[Encoding]\t{}", err),
             CriticalError::Command(ref err) => write!(f, "[Command]\t{}", err),
@@ -153,6 +157,13 @@ impl From<CommandError> for CriticalError {
     }
 }
 
+impl From<TOMLError> for CriticalError {
+    fn from(toml_error: TOMLError) -> Self {
+        CriticalError::TOML(toml_error)
+    }
+
+}
+
 // TODO What does this do, exactly?
 impl Error for CriticalError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
@@ -160,6 +171,7 @@ impl Error for CriticalError {
             CriticalError::FileSystem(ref err) => Some(err),
             CriticalError::Network => None,
             CriticalError::JSON(ref err) => Some(err),
+            CriticalError::TOML(ref err) => Some(err),
             CriticalError::HTTP(ref err) => Some(err),
             CriticalError::Encoding(ref err) => Some(err),
             CriticalError::Command(ref err) => Some(err),

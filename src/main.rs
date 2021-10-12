@@ -8,10 +8,8 @@ use dit::errors::Result;
 fn main() -> Result<()> {
     let app = app::build_app();
 
-    let config = match config::parse_config(&config::LOCAL_CONFIG.clone()) {
-        Some(config) => config,
-        None => panic!("No config!"),
-    };
+
+    let config = config::parse_config(&config::LOCAL_CONFIG.clone())?;
 
     let project = config.project.clone();
 

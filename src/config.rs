@@ -17,19 +17,21 @@ lazy_static! {
     pub static ref LAST_KEYID: PathBuf = Path::join(&KEY_DIR, "keyid");
 }
 
-pub fn parse_config(path: &dyn AsRef<Path>) -> Option<utils::Config> {
+pub fn parse_config(path: &dyn AsRef<Path>) -> Result<utils::Config> {
     let contents = fs::read_to_string(path).expect("No such file");
-
-    if let Ok(mut config) = toml::from_str::<utils::Config>(&contents) {
-       if config.user.is_none() {
-          config.user = Some(utils::User {
-                username: git::get_git_config("name"),
-                email: git::get_git_config("email")
-            });
+    
+    let partial_config = toml::from_str::<utils::Config>(&contents);
+    match partial_config {
+        Ok(mut cfg) => {
+            if cfg.user.is_none() {
+                cfg.user = Some(utils::User {
+                    username: git::get_git_config("name"),
+                    email: git::get_git_config("email")
+                });
+            }
+            Ok(cfg)
         }
-        Some(config)
-    } else {
-        None
+        Err(e) => Err(e.into())
     }
 }
 
