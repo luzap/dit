@@ -1,5 +1,3 @@
-#![feature(command_access)]
-
 use std::fs;
 use std::fs::File;
 use std::io::prelude::Write;
@@ -19,11 +17,11 @@ const TAG_MSG: &'static str = "
 # and might take some time to show up.";
 
 pub struct GitEnv {
-    git_config: HashMap<String, String>,
-    git_dir: PathBuf,
-    tag_msg_file: PathBuf,
-    tag_path: PathBuf,
-    tag_dir: PathBuf
+    pub git_config: HashMap<String, String>,
+    pub git_dir: PathBuf,
+    pub tag_msg_file: PathBuf,
+    pub tag_path: PathBuf,
+    pub tag_dir: PathBuf
 }
 
 // If this is constructed after we have already discovered that there is a config file, then
@@ -31,12 +29,12 @@ pub struct GitEnv {
 impl GitEnv {
     pub fn new() -> GitEnv {
         let git_dir = PathBuf::from(get_repo_root().unwrap());
-        let tag_path = [".git", "refs", "tags"].iter().collect();
+        let tag_path: PathBuf = [".git", "refs", "tags"].iter().collect();
         GitEnv {
             git_config: unwrap_or_exit(get_git_vars()),
-            git_dir,
+            git_dir: git_dir.clone(),
             tag_msg_file: [".git", "TAG_EDITMSG"].iter().collect(),
-            tag_path,
+            tag_path: tag_path.clone(),
             tag_dir: Path::join(&git_dir, tag_path)
         }
     }
@@ -123,7 +121,7 @@ pub fn get_git_tag_message(tag: &str, env: &GitEnv) -> Result<String> {
 
     let mut editor_child = Command::new(editor);
     editor_child
-        .arg(env.tag_msg_file)
+        .arg(&env.tag_msg_file)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit());
 
@@ -137,12 +135,12 @@ pub fn get_git_tag_message(tag: &str, env: &GitEnv) -> Result<String> {
         tag
     );
 
-    let mut file = File::create(env.tag_msg_file)?;
+    let mut file = File::create(&env.tag_msg_file)?;
     file.write(&tag_message.as_bytes())?;
 
     editor_child.spawn()?.wait()?;
 
-    let output = fs::read_to_string(env.tag_msg_file)?;
+    let output = fs::read_to_string(&env.tag_msg_file)?;
     if output.is_empty() {
         return Err(CriticalError::User(UserError::TagMessage));
     }
@@ -153,7 +151,7 @@ pub fn get_git_tag_message(tag: &str, env: &GitEnv) -> Result<String> {
         return Err(CriticalError::User(UserError::TagMessage));
     };
 
-    fs::remove_file(env.tag_msg_file);
+    fs::remove_file(&env.tag_msg_file)?;
 
     Ok(output
         .lines()

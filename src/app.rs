@@ -109,6 +109,7 @@ fn keysign_stage<P: AsRef<Path>>(
     op: &Operation,
     keypair: &PartyKeyPair,
     pgp_file: P,
+    env: &crate::git::GitEnv,
 ) -> Result<()> {
     if let Operation::SignKey {
         participants: _,
@@ -138,7 +139,7 @@ fn keysign_stage<P: AsRef<Path>>(
         message.finalize_signature(hashed, keyid.clone(), sig_data);
 
         message.write_to_file(pgp_file)?;
-        config::write_keyid(&keyid)?;
+        config::write_keyid(&env.git_dir, &keyid)?;
     } else {
         println!("Started signing, with the operation: {:?}", op);
     }
@@ -149,23 +150,24 @@ fn keysign_stage<P: AsRef<Path>>(
 /// Initiates the key generation operation and controls its subsequent control flow
 /// by sending the appropriate operations to the server.
 ///
-/// The leader is the only party that should be able to change the state of an 
+/// The leader is the only party that should be able to change the state of an
 /// existing operation
 pub fn leader_keygen(
     channel: &HTTPChannel,
     config: &Config,
     args: Option<&ArgMatches>,
+    env: &crate::git::GitEnv,
 ) -> Result<()> {
     // TODO Get all of these from the arguments
     let participants = 4;
     let threshold = 2;
 
-    let key_base_dir = &cfg::KEY_DIR.clone();
+    let key_base_dir = Path::join(&env.git_dir, &cfg::CONFIG_DIR);
 
     // Initialize the directory upon first call
-    if *cfg::INITIALIZED == false {
-        fs::create_dir_all(key_base_dir)?
-    };
+    if !cfg::is_config_initialized(&env.git_dir) {
+        fs::create_dir_all(key_base_dir.clone())?
+    }
 
     let (keypair_file, pgp_keyfile) = if let Some(args) = args {
         let pgp_keyfile = Path::join(
@@ -179,7 +181,7 @@ pub fn leader_keygen(
 
         (keypair_file, pgp_keyfile)
     } else {
-        let key_base_dir = &cfg::KEY_DIR.clone();
+        let key_base_dir = Path::join(&env.git_dir, &cfg::CONFIG_DIR);
 
         let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
         let keypair_file = Path::join(&key_base_dir, "public_key.json");
@@ -208,7 +210,7 @@ pub fn leader_keygen(
 
     channel.start_operation(&op);
 
-    keysign_stage(channel, &op, &keypair, pgp_keyfile)?;
+    keysign_stage(channel, &op, &keypair, pgp_keyfile, env)?;
 
     channel.end_operation(&op);
     channel.clear();
@@ -216,14 +218,14 @@ pub fn leader_keygen(
     Ok(())
 }
 
-pub fn participant_keygen(channel: &HTTPChannel, _: &Operation) -> Result<()> {
+pub fn participant_keygen(channel: &HTTPChannel, env: &crate::git::GitEnv) -> Result<()> {
     // TODO Change the name of the default keyfile
-    let key_base_dir = &cfg::KEY_DIR.clone();
+    let key_base_dir = Path::join(&env.git_dir, &cfg::CONFIG_DIR);
 
     let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
     let keypair_file = Path::join(&key_base_dir, "public_key.json");
 
-    if *cfg::INITIALIZED == false {
+    if !cfg::is_config_initialized(&env.git_dir) {
         fs::create_dir_all(key_base_dir)?
     };
 
@@ -241,25 +243,28 @@ pub fn participant_keygen(channel: &HTTPChannel, _: &Operation) -> Result<()> {
         }
     };
 
-    keysign_stage(channel, &new_op, &keypair, pgp_keyfile)?;
+    keysign_stage(channel, &new_op, &keypair, pgp_keyfile, env)?;
 
     Ok(())
 }
 
-pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatches>) -> Result<()> {
+pub fn leader_tag(
+    channel: &HTTPChannel,
+    config: &Config,
+    args: Option<&ArgMatches>,
+    env: &crate::git::GitEnv,
+) -> Result<()> {
     if let Some(args) = args {
         let commit = args.value_of("commit").unwrap_or("HEAD");
         let tag_name = args.value_of("tag name").unwrap();
         let message = if args.is_present("message") {
             String::from(args.value_of("message").unwrap())
         } else {
-            git::get_git_tag_message(tag_name)?
+            git::get_git_tag_message(tag_name, env)?
         };
 
-        let keyfile = Path::join(
-            &cfg::KEY_DIR,
-            &args.value_of("pubkey").unwrap_or("public_key.json"),
-        );
+        let keyfile = Path::join(&env.git_dir, cfg::CONFIG_DIR)
+            .join(&args.value_of("pubkey").unwrap_or("public_key.json"));
 
         let hash = git::get_commit_hash(commit)?;
         let signing_time = utils::get_current_epoch()?;
@@ -278,8 +283,8 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
         let mut tag_string = git::create_tag_string(&tag);
 
         // TODO Get this from the config file or from the server: the server solution
-        // would require for the server to have persistent memory, which is outside 
-        // of what we use right now, but the other variant might be vulnerable to 
+        // would require for the server to have persistent memory, which is outside
+        // of what we use right now, but the other variant might be vulnerable to
         // interference from a malicious developer trying to create the keys
         let op = Operation::SignTag {
             participants: 4,
@@ -287,9 +292,9 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
             tag,
         };
 
-        // TODO The way the current channel interface is structured seems to 
-        // be somewhat problematic. Maybe it's best to create a channel as a 
-        // data object and then pass it to functions that use type bounds on 
+        // TODO The way the current channel interface is structured seems to
+        // be somewhat problematic. Maybe it's best to create a channel as a
+        // data object and then pass it to functions that use type bounds on
         // the interface?
         channel.start_operation(&op);
 
@@ -300,7 +305,7 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
         hashable.append(&mut message.get_hashable());
 
         let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
-        let keyid = config::get_keyid()?;
+        let keyid = config::get_keyid(&env.git_dir)?;
 
         let signature = tag_signing_stage(channel, &hashable, keyfile)?;
         let sig_data = encode_sig_data(signature);
@@ -310,7 +315,7 @@ pub fn leader_tag(channel: &HTTPChannel, config: &Config, args: Option<&ArgMatch
         let armor = armor_binary_output(&signature);
         tag_string.push_str(&armor);
 
-        git::create_git_tag(&tag_name, &tag_string)?;
+        git::create_git_tag(&tag_name, &tag_string, env)?;
 
         channel.end_operation(&op);
 
@@ -332,7 +337,11 @@ fn tag_signing_stage<P: AsRef<Path>>(
     Ok(signing::distributed_sign(channel, message, &keypair).unwrap())
 }
 
-pub fn participant_tag(channel: &HTTPChannel, op: &Operation) -> Result<()> {
+pub fn participant_tag(
+    channel: &HTTPChannel,
+    op: &Operation,
+    env: &crate::git::GitEnv,
+) -> Result<()> {
     let (participants, threshold, tag) = match op {
             Operation::SignTag {
                 participants, threshold, tag } => (participants, threshold, tag),
@@ -347,9 +356,9 @@ pub fn participant_tag(channel: &HTTPChannel, op: &Operation) -> Result<()> {
     let mut hashable = tag_string.as_bytes().to_vec();
     hashable.append(&mut message.get_hashable());
 
+    let keyfile = Path::join(&env.git_dir, cfg::CONFIG_DIR).join("public_key.json");
     // When invoking this as a participant, the user currently does not have any way to
     // specify their keyfile, which we should add some capacity to do at some point
-    let keyfile = Path::join(&cfg::KEY_DIR, "public_key.json");
     tag_signing_stage(channel, &hashable, keyfile)?;
 
     Ok(())
@@ -360,7 +369,7 @@ pub fn participant_tag(channel: &HTTPChannel, op: &Operation) -> Result<()> {
 ///
 /// # Warning
 /// `OsString` does not always contain valid Unicode, and the conversion to Rust strings
-/// may fail. Our `clap` configuration takes all invalid Unicode input as erroneous, 
+/// may fail. Our `clap` configuration takes all invalid Unicode input as erroneous,
 /// so this condition should never trigger.
 pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()> {
     let mut argv: Vec<&str> = Vec::new();
@@ -375,7 +384,7 @@ pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()
 
     // Special case of invoking `git` without subcommands or flags, which displays
     // a list of subcommands and commands to invoke to get more help
-    if argv.len() == 0 {
+    if subcommand.len() == 0 && argv.len() == 0 {
         argv.push("--help");
     }
 

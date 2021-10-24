@@ -63,7 +63,7 @@ fn main() -> Result<()> {
                     let gitenv = dit::git::GitEnv::new();
 
                     if pending_operation == dit::utils::Operation::Idle {
-                        dit::app::leader_keygen(&mut channel, &config, keygen_matches)?;
+                        dit::app::leader_keygen(&mut channel, &config, keygen_matches, &gitenv)?;
                     } else {
                         println!("Pending operation: {:?}", pending_operation);
                         let choice = dit::utils::get_user_choice(
@@ -72,17 +72,19 @@ fn main() -> Result<()> {
                         )?;
 
                         if choice == 0 {
-                            dit::app::participant_keygen(&mut channel, &pending_operation)?;
+                            dit::app::participant_keygen(&mut channel, &gitenv)?;
                         }
                     }
                 }
             }
             ("start-tag", tag_matches) => {
                 if reachable == true {
+                    let gitenv = dit::git::GitEnv::new();
+
                     if pending_operation == dit::utils::Operation::Idle {
                         println!("Initiating tagging");
 
-                        app::leader_tag(&mut channel, &config, tag_matches)?;
+                        app::leader_tag(&mut channel, &config, tag_matches, &gitenv)?;
                     } else {
                         println!("Pending operation!: {:?}", pending_operation);
 
@@ -91,7 +93,7 @@ fn main() -> Result<()> {
                             &["y", "n"],
                         )) == 0
                         {
-                            app::participant_tag(&mut channel, &pending_operation)?;
+                            app::participant_tag(&mut channel, &pending_operation, &gitenv)?;
                         }
                     }
                 }
@@ -104,13 +106,15 @@ fn main() -> Result<()> {
                             &["y", "n"],
                         )) == 0
                         {
+                            let gitenv = dit::git::GitEnv::new();
+
                             match pending_operation {
                                 // TODO The arguments for the partipant are necessary or not?
                                 dit::utils::Operation::KeyGen { .. } => {
-                                    app::participant_keygen(&mut channel, &pending_operation)?
+                                    app::participant_keygen(&mut channel, &gitenv)?
                                 }
                                 dit::utils::Operation::SignTag { .. } => {
-                                    app::participant_tag(&mut channel, &pending_operation)?
+                                    app::participant_tag(&mut channel, &pending_operation, &gitenv)?
                                 }
                                 dit::utils::Operation::Blame {} => unimplemented!(),
                                 _ => unreachable!(),
