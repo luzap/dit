@@ -162,10 +162,10 @@ pub fn leader_keygen(
 
     let key_base_dir = &cfg::KEY_DIR.clone();
 
-    /* // Initialize the directory upon first call
+    // Initialize the directory upon first call
     if *cfg::INITIALIZED == false {
         fs::create_dir_all(key_base_dir)?
-    }; */
+    };
 
     let (keypair_file, pgp_keyfile) = if let Some(args) = args {
         let pgp_keyfile = Path::join(
@@ -223,9 +223,9 @@ pub fn participant_keygen(channel: &HTTPChannel, _: &Operation) -> Result<()> {
     let pgp_keyfile = Path::join(&key_base_dir, "keyfile.pgp");
     let keypair_file = Path::join(&key_base_dir, "public_key.json");
 
-    /* if *cfg::INITIALIZED == false {
+    if *cfg::INITIALIZED == false {
         fs::create_dir_all(key_base_dir)?
-    }; */
+    };
 
     let keypair = keygen_stage(channel, keypair_file)?;
 

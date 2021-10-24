@@ -56,8 +56,6 @@ impl fmt::Display for UserError {
 
 impl Error for UserError {}
 
-// TODO Merge the errors for the JSON and TOML decoding, since they're technically
-// decoding errors
 #[derive(Debug)]
 pub enum CriticalError {
     FileSystem(std::io::Error),
@@ -81,9 +79,9 @@ impl fmt::Display for CriticalError {
                 let err_ref = err.get_ref();
 
                 if let Some(cause) = err_ref {
-                        write!(f, "[File System]:\t {} caused by {}", description, cause)
+                        write!(f, "[File System]:\t{} caused by {}", description, cause)
                 } else {
-                        write!(f, "[File System]:\t {}", description)
+                        write!(f, "[File System]:\t{}", description)
                 }
             },
             // TODO Right now, this error does not actually exist
@@ -105,10 +103,9 @@ impl fmt::Display for CriticalError {
             },
             CriticalError::TOML(ref err) => {
                 if let Some((line, col)) = err.line_col() {
-
-                    write!(f, "[TOML]\t Decoding error at line {}, col {}: {}", line, col, err)
+                    write!(f, "[TOML]\tDecoding error at line {}, col {}: {}", line, col, err)
                 } else {
-                        write!(f, "[TOML]\t Decoding error {}", err)
+                        write!(f, "[TOML]\tDecoding error {}", err)
                     }
 
             },

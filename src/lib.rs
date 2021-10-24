@@ -1,3 +1,4 @@
+#![feature(command_access)]
 pub mod app;
 pub mod config;
 pub mod git;
