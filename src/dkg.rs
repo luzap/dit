@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use crate::comm::{HTTPChannel, PartyKeyPair};
 
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::orchestrate::{
@@ -180,12 +181,12 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         .collect::<Vec<DLogStatement>>();
 
     Ok(PartyKeyPair {
-        party_keys_s: res_stage1.party_keys_l,
+        party_keys: res_stage1.party_keys_l,
         shared_keys: res_stage3.shared_keys_s,
-        party_num_int_s: party_num_int,
-        vss_scheme_vec_s: vss_scheme_vec,
-        paillier_key_vec_s: paillier_key_vec,
-        y_sum_s: y_sum,
-        h1_h2_N_tilde_vec_s: h1_h2_N_tilde_vec,
+        party_num_int: party_num_int,
+        vss_scheme_vec,
+         paillier_key_vec,
+        y_sum,
+        h1_h2_N_tilde_vec,
     })
 }

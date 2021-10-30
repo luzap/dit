@@ -119,8 +119,8 @@ fn keysign_stage<P: AsRef<Path>>(
         epoch,
     } = op
     {
-        let x = keypair.y_sum_s.x_coor().unwrap().to_bytes();
-        let y = keypair.y_sum_s.y_coor().unwrap().to_bytes();
+        let x = keypair.y_sum.x_coor().unwrap().to_bytes();
+        let y = keypair.y_sum.y_coor().unwrap().to_bytes();
         let mut message = Message::new();
 
         let keyid = message.new_public_key(

@@ -1,10 +1,4 @@
 // Part of the code here has been taken from
-// :
-// TODO Message struct
-// TODO Make sure every struct we're using can be hashed (implements AsRef<[u8]> to pass to the
-// hash crate directly)
-// TODO Make a new file for crypto helper methods
-//
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{thread, time};
@@ -19,15 +13,16 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::party_i::{Keys, Sh
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
+#[allow(non_snake_case)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartyKeyPair {
-    pub party_keys_s: Keys,
+    pub party_keys: Keys,
     pub shared_keys: SharedKeys,
-    pub party_num_int_s: u16,
-    pub vss_scheme_vec_s: Vec<VerifiableSS<GE>>,
-    pub paillier_key_vec_s: Vec<EncryptionKey>,
-    pub y_sum_s: GE,
-    pub h1_h2_N_tilde_vec_s: Vec<DLogStatement>,
+    pub party_num_int: u16,
+    pub vss_scheme_vec: Vec<VerifiableSS<GE>>,
+    pub paillier_key_vec: Vec<EncryptionKey>,
+    pub y_sum: GE,
+    pub h1_h2_N_tilde_vec: Vec<DLogStatement>,
 }
 
 pub type Key = String;

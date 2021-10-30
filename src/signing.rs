@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use crate::comm::PartyKeyPair;
 use curv::arithmetic::Converter;
 use curv::{
@@ -35,7 +37,7 @@ pub fn distributed_sign(
         .broadcast(
             party_num_int,
             "sign-round0",
-            serde_json::to_string(&keypair.party_num_int_s).unwrap(),
+            serde_json::to_string(&keypair.party_num_int).unwrap(),
         )
         .unwrap();
 
@@ -48,7 +50,7 @@ pub fn distributed_sign(
     let mut signers_vec: Vec<usize> = Vec::new();
     for i in 1..=params.threshold + 1 {
         if i == party_num_int {
-            signers_vec.push((keypair.party_num_int_s - 1) as usize);
+            signers_vec.push((keypair.party_num_int - 1) as usize);
         } else {
             let signer_j: u16 = serde_json::from_str(&round0_ans_vec[j]).unwrap();
             signers_vec.push((signer_j - 1) as usize);
@@ -56,10 +58,10 @@ pub fn distributed_sign(
         }
     }
     let input_stage1 = SignStage1Input {
-        vss_scheme: keypair.vss_scheme_vec_s[signers_vec[(party_num_int - 1) as usize]].clone(),
+        vss_scheme: keypair.vss_scheme_vec[signers_vec[(party_num_int - 1) as usize]].clone(),
         index: signers_vec[(party_num_int - 1) as usize],
         s_l: signers_vec.clone(),
-        party_keys: keypair.party_keys_s.clone(),
+        party_keys: keypair.party_keys.clone(),
         shared_keys: keypair.shared_keys.clone(),
     };
 
@@ -106,7 +108,7 @@ pub fn distributed_sign(
         m_a_vec: m_a_vec.clone(),
         gamma_i: res_stage1.sign_keys.gamma_i.clone(),
         w_i: res_stage1.sign_keys.w_i.clone(),
-        ek_vec: keypair.paillier_key_vec_s.clone(),
+        ek_vec: keypair.paillier_key_vec.clone(),
         index: (party_num_int - 1) as usize,
         l_ttag: signers_vec.len() as usize,
         l_s: signers_vec.clone(),
@@ -156,7 +158,7 @@ pub fn distributed_sign(
     }
 
     let input_stage3 = SignStage3Input {
-        dk_s: keypair.party_keys_s.dk.clone(),
+        dk_s: keypair.party_keys.dk.clone(),
         k_i_s: res_stage1.sign_keys.k_i.clone(),
         m_b_gamma_s: m_b_gamma_rec_vec.clone(),
         m_b_w_s: m_b_w_rec_vec.clone(),
@@ -259,15 +261,15 @@ pub fn distributed_sign(
         R_dash_vec,
         R: res_stage5.R,
         m_a: res_stage1.m_a.0.clone(),
-        e_k: keypair.paillier_key_vec_s[signers_vec[party_num_int as usize - 1] as usize].clone(),
+        e_k: keypair.paillier_key_vec[signers_vec[party_num_int as usize - 1] as usize].clone(),
         k_i: res_stage1.sign_keys.k_i,
         randomness: res_stage1.m_a.1.clone(),
-        party_keys: keypair.party_keys_s.clone(),
-        h1_h2_N_tilde_vec: keypair.h1_h2_N_tilde_vec_s.clone(),
+        party_keys: keypair.party_keys.clone(),
+        h1_h2_N_tilde_vec: keypair.h1_h2_N_tilde_vec.clone(),
         index: party_num_int as usize - 1,
         s: signers_vec.clone(),
         sigma: res_stage4.sigma_i,
-        ysum: keypair.y_sum_s,
+        ysum: keypair.y_sum,
         sign_key: res_stage1.sign_keys,
         message_bn: message.clone(),
     };
@@ -298,7 +300,7 @@ pub fn distributed_sign(
 
     let input_stage7 = SignStage7Input {
         local_sig_vec: local_sig_vec,
-        ysum: keypair.y_sum_s.clone(),
+        ysum: keypair.y_sum.clone(),
     };
 
     let res_stage7 = sign_stage7(&input_stage7).expect("sign stage 7 failed");
