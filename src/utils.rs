@@ -1,4 +1,5 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::fmt::Display;
 use std::fs;
 use std::io;
 use std::io::Write;
@@ -36,11 +37,11 @@ pub enum Operation {
         epoch: u64,
     },
     // TODO Might be best to encapsulate some of this to a dedicated structure, to avoid the
-// clutter
+    // clutter
     SignTag {
         participants: u16,
         threshold: u16,
-        tag: Tag
+        tag: Tag,
     },
     SignKey {
         participants: u16,
@@ -52,19 +53,66 @@ pub enum Operation {
     Blame {},
 }
 
+impl Display for Operation {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        match self {
+            Operation::Idle => write!(fmt, "Currently idle"),
+            Operation::KeyGen {
+                participants,
+                leader,
+                email,
+                epoch,
+            } => write!(
+                fmt,
+                "{} <{}> started key generation at {} with {} participants",
+                leader, email, epoch, participants
+            ),
+            Operation::SignTag {
+                participants,
+                threshold,
+                tag,
+            } => write!(
+                fmt,
+                "Signing tag with a {}-{} threshold\n. The tag is {}",
+                participants, threshold, tag
+            ),
+            Operation::SignKey {
+                participants,
+                threshold,
+                leader,
+                email,
+                epoch,
+            } => write!(
+                fmt,
+                "{} <{}> started signing the key with a {}-{} threshold at {}",
+                leader, email, participants, threshold, epoch
+            ),
+            Operation::Blame {} => write!(fmt, "Protocol has been terminated"),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Eq)]
 pub struct Tag {
     pub creator: String,
-    pub email: String, 
+    pub email: String,
     pub epoch: u64,
     // TODO Technically this could be an integer with some string conversion
     pub timezone: String,
     pub name: String,
     pub commit: String,
-    pub message: String
+    pub message: String,
 }
 
+impl Display for Tag {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(
+            fmt,
+            "tag {}\ncreator {} <{}>\nepoch {} {}\nmessage:\n{}",
+            self.commit, self.creator, self.email, self.epoch, self.timezone, self.message
+        )
+    }
+}
 
 /// Get seconds since the Unix epoch
 ///
@@ -88,7 +136,7 @@ pub fn read_data_from_file<P: AsRef<Path>, T: DeserializeOwned>(path: P) -> Resu
 
 pub fn get_user_choice(prompt: &str, choices: &[&str]) -> Result<usize> {
     let mut input = String::with_capacity(choices[0].len());
-    // Indicating that the default choice is the first one 
+    // Indicating that the default choice is the first one
     let default_choice = format!("{}/{}", choices[0], choices[1..].join("/"));
 
     loop {

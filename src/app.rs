@@ -112,8 +112,8 @@ fn keysign_stage<P: AsRef<Path>>(
     env: &crate::git::GitEnv,
 ) -> Result<()> {
     if let Operation::SignKey {
-        participants: _,
-        threshold: _,
+        participants,
+        threshold,
         leader,
         email,
         epoch,
@@ -134,7 +134,15 @@ fn keysign_stage<P: AsRef<Path>>(
         let hashed = message.get_sha256_hash(None);
         let hashed = &hashed[hashed.len() - 2..];
 
-        let signature = signing::distributed_sign(channel, &hashable, &keypair).unwrap();
+        // TODO Could afford to use some more descriptive errors, and distinguish between them
+        // and blames, but that's something for later
+        let signature = match signing::distributed_sign(channel, &hashable, &keypair) {
+            Ok(sig) => sig,
+            Err(_) => {
+                println!("Did not participate in key signing! \nMake sure to sync repository before initiating tag signing");
+                return Ok(());
+            }
+        };
         let sig_data = encode_sig_data(signature);
         message.finalize_signature(hashed, keyid.clone(), sig_data);
 
@@ -188,7 +196,8 @@ pub fn leader_keygen(
         (keypair_file, pgp_keyfile)
     };
 
-    let user = config.user.clone().unwrap();
+    let user = get_user(config, env);
+
     let op = utils::Operation::KeyGen {
         participants,
         leader: user.username.clone(),
@@ -268,7 +277,7 @@ pub fn leader_tag(
 
         let hash = git::get_commit_hash(commit)?;
         let signing_time = utils::get_current_epoch()?;
-        let user = config.clone().user.unwrap();
+        let user = get_user(config, env);
 
         let tag = utils::Tag {
             creator: user.username,
@@ -391,4 +400,22 @@ pub fn git_passthrough(subcommand: &str, args: Option<&ArgMatches>) -> Result<()
     git::git_owning_subcommand(subcommand, &argv)?;
 
     Ok(())
+}
+
+fn get_user(config: &Config, env: &crate::git::GitEnv) -> utils::User {
+    if let Some(user) = config.user.clone() {
+        user.clone()
+    } else {
+        let username = match env.git_config.get("name") {
+            Some(name) => name.clone(),
+            None => String::from(""),
+        };
+
+        let email = match env.git_config.get("email") {
+            Some(email) => email.clone(),
+            None => String::from(""),
+        };
+
+        utils::User { username, email }
+    }
 }

@@ -203,7 +203,6 @@ impl HTTPChannel {
 
         let res_body: String = self.postb("signupsign", key).unwrap();
 
-        println!("Res body: {:?}", res_body);
         let res_body: Result<PartySignup, ()> = serde_json::from_str(&res_body).unwrap();
 
         if let Ok(res) = res_body {

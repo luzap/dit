@@ -31,16 +31,17 @@ fn main() -> Result<()> {
 
         return Ok(());
     } else {
+        println!("Config file present, working in dit mode");
+
         // In this case, we actually need to consider whether it's possible to use
         // dit-specific features. For that, we need to double check how to setup
         // all of the requisite data structures, taking care to do so only when they
         // are required, to not slow execution too much.
-        // TODO Does this get optimized out?
         let config = config.unwrap();
 
         let project = config.project.clone();
 
-        // TODO Where do we move this out?
+        // TODO Move this to an enum
         let mut channel = HTTPChannel::new(
             format!("http://{}:{}", config.server.address, config.server.port),
             project,
@@ -65,7 +66,7 @@ fn main() -> Result<()> {
                     if pending_operation == dit::utils::Operation::Idle {
                         dit::app::leader_keygen(&mut channel, &config, keygen_matches, &gitenv)?;
                     } else {
-                        println!("Pending operation: {:?}", pending_operation);
+                        println!("{}", pending_operation);
                         let choice = dit::utils::get_user_choice(
                             "Participate in the pending operation?",
                             &["y", "n"],
@@ -86,7 +87,7 @@ fn main() -> Result<()> {
 
                         app::leader_tag(&mut channel, &config, tag_matches, &gitenv)?;
                     } else {
-                        println!("Pending operation!: {:?}", pending_operation);
+                        println!("{}", pending_operation);
 
                         if errors::unwrap_or_exit(dit::utils::get_user_choice(
                             "Participate in the pending operation?",
@@ -101,6 +102,7 @@ fn main() -> Result<()> {
             (other, args) => {
                 if reachable == true {
                     if pending_operation != dit::utils::Operation::Idle {
+                        println!("{}", pending_operation);
                         if errors::unwrap_or_exit(dit::utils::get_user_choice(
                             "Participate in the pending operation?",
                             &["y", "n"],
