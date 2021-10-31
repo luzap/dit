@@ -11,6 +11,8 @@ When in a `git` repository, `dit` will check for a `config.toml` file at its roo
 
 ```toml
 project = "sample"
+participants = 4
+threshold = 2
 
 [server]
 address = "localhost"
@@ -18,6 +20,12 @@ port = 8000
 ```
 
 We have only implemented a single, HTTP channel, with a server to go with it, which can be thought of as a 'bootstrap' channel. When running for the first time, the key generation part of the protocol (the phase that can be computed without the message) is run to completion, meaning all of the participants get their share of the private key in the `.dit` folder. Furthermore, to ensure the legitimacy of the key, we collaboratively self-sign it to indicate that the participants indeed possess sufficient shares to recreate the private key.
+
+## Dependencies
+- GnuPG version 2.1, compiled with `libgcrypt >= 1.7.0`: this is the first version of GnuPG that added support for elliptic curves, including the `secp256k1` (Bitcoin) curve that we are using as part of the multi-party ECDSA library.
+- `git` recent enough to support tags
+- GNU Coreutils
+- Rust version `1.56.0-nightly` (may work with, but has not been tested with other versions)
 
 ## Example usage
 
@@ -34,11 +42,6 @@ Producing and verifying tags:
 [![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
 
 
-## Dependencies
-- GnuPG version 2.1, compiled with `libgcrypt >= 1.7.0`: this is the first version of GnuPG that added support for elliptic curves, including the `secp256k1` (Bitcoin) curve that we are using as part of the multi-party ECDSA library.
-- `git` recent enough to support tags
-- GNU Coreutils
-- Rust version `1.56.0-nightly` (may work with, but has not been tested with other versions)
 
 ## Examples
 
@@ -92,3 +95,4 @@ Another point worth investigating is _how_ to present code changes to the user. 
 - [ ] Keyid file: the GPG key ID is best generated when the key is parsed into an internal data representation, but we have focused our efforts purely on exporting GPG keys, not interpreting them for further data. Currently, we store the key ID of the current key in `.dit/keyid`, but this seems like a hack
 - [ ] Reducing communication: currently, `dit` phones home after every invocation, which could be reduced if we could set some sort of timer between invocations (have it run as a server) or have an environment variable be decremented upon every invocation.
 - [ ] Reduing GPG noise: without additional signatures to indicate the identity of the user, GPG will always say that the identity of the user has not been vouched for by any third party. If the key gets checked into version control (which is the simplest current path for distribution), then the participants can sign the public key and commit the change, though there might be other avenues to explore.
+- [ ] Server improvements: the current server might be a little too liberal with locks, and there might be both better and more efficient ways of handling the data synchronization
