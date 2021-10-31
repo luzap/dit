@@ -87,10 +87,13 @@ pub fn build_app() -> App<'static, 'static> {
 /// # Warning
 /// Will fail on protocol, network and local file system errors
 ///
-fn keygen_stage<P: AsRef<Path>>(channel: &HTTPChannel, keypair_file: P) -> Result<PartyKeyPair> {
-    let keypair = dkg::distributed_keygen(channel).unwrap();
+fn keygen_stage<P: AsRef<Path>>(
+    channel: &HTTPChannel,
+    keypair_file: P,
+    config: &Config,
+) -> Result<PartyKeyPair> {
+    let keypair = dkg::distributed_keygen(channel, config.participants, config.threshold).unwrap();
 
-    println!("{:?}", keypair_file.as_ref());
     fs::write(keypair_file, serde_json::to_string(&keypair)?)?;
 
     Ok(keypair)
@@ -110,6 +113,7 @@ fn keysign_stage<P: AsRef<Path>>(
     keypair: &PartyKeyPair,
     pgp_file: P,
     env: &crate::git::GitEnv,
+    config: &Config,
 ) -> Result<()> {
     if let Operation::SignKey {
         participants: _,
@@ -136,7 +140,13 @@ fn keysign_stage<P: AsRef<Path>>(
 
         // TODO Could afford to use some more descriptive errors, and distinguish between them
         // and blames, but that's something for later
-        let signature = match signing::distributed_sign(channel, &hashable, &keypair) {
+        let signature = match signing::distributed_sign(
+            channel,
+            &hashable,
+            &keypair,
+            config.participants,
+            config.threshold,
+        ) {
             Ok(sig) => sig,
             Err(_) => {
                 println!("Did not participate in key signing! \nMake sure to sync repository before initiating tag signing");
@@ -205,7 +215,7 @@ pub fn leader_keygen(
     };
     channel.start_operation(&op);
 
-    let keypair = keygen_stage(channel, keypair_file)?;
+    let keypair = keygen_stage(channel, keypair_file, config)?;
     channel.end_operation(&op);
 
     let op = Operation::SignKey {
@@ -218,7 +228,7 @@ pub fn leader_keygen(
 
     channel.start_operation(&op);
 
-    keysign_stage(channel, &op, &keypair, pgp_keyfile, env)?;
+    keysign_stage(channel, &op, &keypair, pgp_keyfile, env, config)?;
 
     channel.end_operation(&op);
     channel.clear();
@@ -226,7 +236,11 @@ pub fn leader_keygen(
     Ok(())
 }
 
-pub fn participant_keygen(channel: &HTTPChannel, env: &crate::git::GitEnv) -> Result<()> {
+pub fn participant_keygen(
+    channel: &HTTPChannel,
+    env: &crate::git::GitEnv,
+    config: &Config,
+) -> Result<()> {
     // TODO Change the name of the default keyfile
     let key_base_dir = Path::join(&env.git_dir, &cfg::CONFIG_DIR);
 
@@ -237,7 +251,7 @@ pub fn participant_keygen(channel: &HTTPChannel, env: &crate::git::GitEnv) -> Re
         fs::create_dir_all(key_base_dir)?
     };
 
-    let keypair = keygen_stage(channel, keypair_file)?;
+    let keypair = keygen_stage(channel, keypair_file, config)?;
 
     let new_op = loop {
         let new_op = channel.get_current_operation();
@@ -251,7 +265,7 @@ pub fn participant_keygen(channel: &HTTPChannel, env: &crate::git::GitEnv) -> Re
         }
     };
 
-    keysign_stage(channel, &new_op, &keypair, pgp_keyfile, env)?;
+    keysign_stage(channel, &new_op, &keypair, pgp_keyfile, env, config)?;
 
     Ok(())
 }
@@ -315,7 +329,7 @@ pub fn leader_tag(
         let hash = message.get_sha256_hash(Some(tag_string.as_bytes().to_vec()));
         let keyid = config::get_keyid(&env.git_dir)?;
 
-        let signature = tag_signing_stage(channel, &hashable, keyfile)?;
+        let signature = tag_signing_stage(channel, &hashable, keyfile, config)?;
         let sig_data = encode_sig_data(signature);
         let hash = &hash[hash.len() - 2..];
         message.finalize_signature(hash, keyid, sig_data);
@@ -340,15 +354,24 @@ fn tag_signing_stage<P: AsRef<Path>>(
     channel: &HTTPChannel,
     message: &[u8],
     keyfile: P,
+    config: &Config,
 ) -> Result<SignatureRecid> {
     let keypair: PartyKeyPair = utils::read_data_from_file(&keyfile)?;
-    Ok(signing::distributed_sign(channel, message, &keypair).unwrap())
+    Ok(signing::distributed_sign(
+        channel,
+        message,
+        &keypair,
+        config.participants,
+        config.threshold,
+    )
+    .unwrap())
 }
 
 pub fn participant_tag(
     channel: &HTTPChannel,
     op: &Operation,
     env: &crate::git::GitEnv,
+    config: &Config
 ) -> Result<()> {
     let (_, _, tag) = match op {
             Operation::SignTag {
@@ -367,7 +390,7 @@ pub fn participant_tag(
     let keyfile = Path::join(&env.git_dir, cfg::CONFIG_DIR).join("public_key.json");
     // When invoking this as a participant, the user currently does not have any way to
     // specify their keyfile, which we should add some capacity to do at some point
-    tag_signing_stage(channel, &hashable, keyfile)?;
+    tag_signing_stage(channel, &hashable, keyfile, config)?;
 
     Ok(())
 }

@@ -138,7 +138,6 @@ impl HTTPChannel {
                     let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
                     if let Ok(answer) = answer {
                         ans_vec.push(answer.value);
-                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
                         break;
                     }
                 }
@@ -161,7 +160,6 @@ impl HTTPChannel {
                     let answer: Result<Entry, ()> = serde_json::from_str(&res_body).unwrap();
                     if let Ok(answer) = answer {
                         ans_vec.push(answer.value);
-                        println!("[{:?}] party {:?} => party {:?}", round, i, party_num);
                         break;
                     }
                 }

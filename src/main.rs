@@ -73,7 +73,8 @@ fn main() -> Result<()> {
                         )?;
 
                         if choice == 0 {
-                            dit::app::participant_keygen(&mut channel, &gitenv)?;
+                            dit::app::participant_keygen(&mut channel, &gitenv, &config)?;
+                            println!("Key generation is complete, and the key should be under the `.dit` folder");
                         }
                     }
                 }
@@ -86,6 +87,9 @@ fn main() -> Result<()> {
                         println!("Initiating tagging");
 
                         app::leader_tag(&mut channel, &config, tag_matches, &gitenv)?;
+
+                        println!("Finished tagging!");
+                        println!("To make sure the other participants can see the tag, don't forget to push it");
                     } else {
                         println!("{}", pending_operation);
 
@@ -94,7 +98,7 @@ fn main() -> Result<()> {
                             &["y", "n"],
                         )) == 0
                         {
-                            app::participant_tag(&mut channel, &pending_operation, &gitenv)?;
+                            app::participant_tag(&mut channel, &pending_operation, &gitenv, &config)?;
                         }
                     }
                 }
@@ -110,13 +114,14 @@ fn main() -> Result<()> {
                         {
                             let gitenv = dit::git::GitEnv::new();
 
+                            // TODO Could probably remove the config and just get the vars 
+                            // from the op
                             match pending_operation {
-                                // TODO The arguments for the partipant are necessary or not?
                                 dit::utils::Operation::KeyGen { .. } => {
-                                    app::participant_keygen(&mut channel, &gitenv)?
+                                    app::participant_keygen(&mut channel, &gitenv, &config)?
                                 }
                                 dit::utils::Operation::SignTag { .. } => {
-                                    app::participant_tag(&mut channel, &pending_operation, &gitenv)?
+                                    app::participant_tag(&mut channel, &pending_operation, &gitenv, &config)?
                                 }
                                 dit::utils::Operation::Blame {} => unimplemented!(),
                                 _ => unreachable!(),

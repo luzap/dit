@@ -15,11 +15,15 @@ use curv::elliptic::curves::secp256_k1::{FE, GE};
 use paillier::EncryptionKey;
 use zk_paillier::zkproofs::DLogStatement;
 
-pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
+pub fn distributed_keygen(
+    channel: &HTTPChannel,
+    participants: u16,
+    threshold: u16,
+) -> Result<PartyKeyPair, ()> {
     // TODO Get rid of this
     let params = Parameters {
-        threshold: 2,
-        share_count: 4,
+        threshold,
+        share_count: participants,
     };
 
     let party_num_int = channel.signup_keygen().unwrap();
@@ -38,7 +42,8 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         )
         .unwrap();
 
-    let round1_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round1");
+    let round1_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round1");
 
     let mut bc1_vec = round1_ans_vec
         .iter()
@@ -55,7 +60,8 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         )
         .unwrap();
 
-    let round2_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round2");
+    let round2_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round2");
 
     let mut decom1_vec = round2_ans_vec
         .iter()
@@ -119,7 +125,8 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         .unwrap();
 
     //get vss_scheme for others.
-    let round4_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round4");
+    let round4_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round4");
 
     let mut j = 0;
     let mut vss_scheme_vec: Vec<VerifiableSS<GE>> = Vec::new();
@@ -150,7 +157,8 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         )
         .unwrap();
 
-    let round5_ans_vec = channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round5");
+    let round5_ans_vec =
+        channel.poll_for_broadcasts(party_num_int, params.share_count, "dkg-round5");
 
     let mut j = 0;
     let mut dlog_proof_vec: Vec<DLogProof<GE>> = Vec::new();
@@ -185,7 +193,7 @@ pub fn distributed_keygen(channel: &HTTPChannel) -> Result<PartyKeyPair, ()> {
         shared_keys: res_stage3.shared_keys_s,
         party_num_int: party_num_int,
         vss_scheme_vec,
-         paillier_key_vec,
+        paillier_key_vec,
         y_sum,
         h1_h2_N_tilde_vec,
     })

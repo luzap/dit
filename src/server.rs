@@ -115,7 +115,6 @@ fn get(
 ) -> Json<Result<Entry, ()>> {
     let (project_name, index) = request.into_inner();
 
-    println!("Index: {:?}", index);
     // TODO I don't like holding the lock for so long but it seems necessary
     let hm = db_mtx.read().unwrap();
     let project = hm.get(&project_name).unwrap();
@@ -141,7 +140,6 @@ fn set(
 ) -> Json<Result<(), ()>> {
     let (project_name, entry) = request.into_inner();
 
-    println!("Getting index: {:?}", entry);
     let hm = db_mtx.write().unwrap();
     let project = hm.get(&project_name).unwrap();
     let mut project_cache = project.cache.write().unwrap();
@@ -200,7 +198,6 @@ fn signup_sign(db_mtx: State<RwLock<HashMap<String, Project>>>, request: Json<(S
             ..
         } => threshold,
         _ => {
-            println!("op: {:?}", op); 
             panic!("Trying to register for signatures when everything is not yet done!");
         }
     } as usize;

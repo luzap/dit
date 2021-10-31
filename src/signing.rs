@@ -22,15 +22,17 @@ pub fn distributed_sign(
     channel: &HTTPChannel,
     message: &[u8],
     keypair: &PartyKeyPair,
+    participants: u16,
+    threshold: u16,
 ) -> Result<SignatureRecid, ()> {
     let params = Parameters {
-        threshold: 2,
-        share_count: 4,
+        threshold,
+        share_count: participants,
     };
 
     let party_num_int = match channel.signup_sign() {
         Ok(index) => index,
-        Err(_) => return Err(())
+        Err(_) => return Err(()),
     };
 
     channel
@@ -43,7 +45,6 @@ pub fn distributed_sign(
 
     let round0_ans_vec =
         channel.poll_for_broadcasts(party_num_int, params.threshold + 1, "sign-round0");
-
 
     let mut j = 0;
     //0 indexed vec containing ids of the signing parties.
@@ -114,7 +115,6 @@ pub fn distributed_sign(
         l_s: signers_vec.clone(),
     };
 
-
     let mut beta_vec: Vec<FE> = vec![];
     let mut ni_vec: Vec<FE> = vec![];
     let res_stage2 = sign_stage2(&input_stage2).expect("sign stage2 failed.");
@@ -129,7 +129,6 @@ pub fn distributed_sign(
             // paillier encrypted values and are thus safe to send as is.
             let c_b_messageb_gammai = res_stage2.gamma_i_vec[j].0.clone();
             let c_b_messageb_wi = res_stage2.w_i_vec[j].0.clone();
-
 
             channel
                 .sendp2p(
@@ -149,7 +148,7 @@ pub fn distributed_sign(
     let mut m_b_gamma_rec_vec: Vec<MessageB> = Vec::new();
     let mut m_b_w_rec_vec: Vec<MessageB> = Vec::new();
 
-    // TODO Can safely replace this 
+    // TODO Can safely replace this
     for i in 0..params.threshold {
         let (l_mb_gamma, l_mb_w): (MessageB, MessageB) =
             serde_json::from_str(&round2_ans_vec[i as usize]).unwrap();
@@ -194,7 +193,7 @@ pub fn distributed_sign(
         .broadcast(
             party_num_int,
             "sign-round4",
-            serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i,)).unwrap(),
+            serde_json::to_string(&(res_stage1.decom1.clone(), res_stage4.delta_i)).unwrap(),
         )
         .unwrap();
 
