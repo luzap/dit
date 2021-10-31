@@ -75,7 +75,7 @@ impl Display for Operation {
                 tag,
             } => write!(
                 fmt,
-                "Signing tag with a {}-{} threshold\n. The tag is {}",
+                "Signing tag with a {}-{} threshold:\n{}",
                 participants, threshold, tag
             ),
             Operation::SignKey {
@@ -110,7 +110,7 @@ impl Display for Tag {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         write!(
             fmt,
-            "tag {}\ncreator {} <{}>\nepoch {} {}\nmessage:\n{}",
+            "tag {}\ncreator {} <{}>\nepoch {} {}\n\n{}",
             self.commit, self.creator, self.email, self.epoch, self.timezone, self.message
         )
     }

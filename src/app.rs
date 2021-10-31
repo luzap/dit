@@ -215,7 +215,9 @@ pub fn leader_keygen(
     };
     channel.start_operation(&op);
 
+    println!("Generating key shares");
     let keypair = keygen_stage(channel, keypair_file, config)?;
+    println!("Signing key");
     channel.end_operation(&op);
 
     let op = Operation::SignKey {
@@ -229,6 +231,7 @@ pub fn leader_keygen(
     channel.start_operation(&op);
 
     keysign_stage(channel, &op, &keypair, pgp_keyfile, env, config)?;
+    println!("Successfully signed key");
 
     channel.end_operation(&op);
     channel.clear();
@@ -251,7 +254,9 @@ pub fn participant_keygen(
         fs::create_dir_all(key_base_dir)?
     };
 
+    println!("Generating key shares");
     let keypair = keygen_stage(channel, keypair_file, config)?;
+    println!("Signing key");
 
     let new_op = loop {
         let new_op = channel.get_current_operation();
@@ -266,6 +271,7 @@ pub fn participant_keygen(
     };
 
     keysign_stage(channel, &new_op, &keypair, pgp_keyfile, env, config)?;
+    println!("Key signing stage finished!");
 
     Ok(())
 }
