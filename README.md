@@ -21,7 +21,17 @@ We have only implemented a single, HTTP channel, with a server to go with it, wh
 
 ## Example usage
 
-TODO
+In Git compatibility mode:
+[![asciicast](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6.svg)](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6)
+
+In Dit mode without server:
+[![asciicast](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ.svg)](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ)
+
+Key generation with external commands working:
+[![asciicast](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq.svg)](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq)
+
+Producing and verifying tags: 
+[![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
 
 
 ## Dependencies
@@ -40,7 +50,7 @@ TODO
 3. Make four different copies of the repository you are going to be working on, to mimic the distributed workflow (running four instances of the threshold signing protocols in the same folder was not an intended use-case, and the executable outputs its intermediary files to the `.dit` directory under a hard-coded name). 
 4. Start the leader by running `dit keygen`. 
 5. Run the executable in the other copies of the directories with any `dit` command (`dit` will do, as will `dit` followed by any Git subcommand)
-6. Each of the executables will present you with an option of participanting in the key generation
+6. Each of the executables will present you with an option of participating in the key generation
 7. (Optional) When the protocol is completed, you can check in the public key (created under the `.dit` directory as `.gpg` file) into Git
 8. When you want to create a tag, run `dit start-tag [tag_name]` and enter a tag message.
 9. Proceed as in step 5
@@ -56,6 +66,7 @@ Another point worth investigating is _how_ to present code changes to the user. 
 
 ## Future work
 - [ ] Secure communication (hashing broadcast messages according to the protocol description)
-- [ ] Better error handling between the protocol execution and the frontend
-- [ ] More semanitically descriptive errors for protocol failure
+- [ ] Better error handling between the protocol execution and the front-end
+- [ ] More semantically descriptive errors for protocol failure
 - [ ] Channels: having an `enum` with all possible channel types might be the simplest way
+- [ ] Async integration: all of the networking requests could be done asynchronously, and we already depend on an async runtime lower down in the dependency stack
