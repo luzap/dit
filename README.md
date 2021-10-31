@@ -19,6 +19,21 @@ port = 8000
 
 We have only implemented a single, HTTP channel, with a server to go with it, which can be thought of as a 'bootstrap' channel. When running for the first time, the key generation part of the protocol (the phase that can be computed without the message) is run to completion, meaning all of the participants get their share of the private key in the `.dit` folder. Furthermore, to ensure the legitimacy of the key, we collaboratively self-sign it to indicate that the participants indeed possess sufficient shares to recreate the private key.
 
+## Example usage
+
+In Git compatibility mode:
+[![asciicast](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6.svg)](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6)
+
+In Dit mode without server:
+[![asciicast](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ.svg)](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ)
+
+Key generation with external commands working:
+[![asciicast](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq.svg)](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq)
+
+Producing and verifying tags: 
+[![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
+
+
 ## Dependencies
 - GnuPG version 2.1, compiled with `libgcrypt >= 1.7.0`: this is the first version of GnuPG that added support for elliptic curves, including the `secp256k1` (Bitcoin) curve that we are using as part of the multi-party ECDSA library.
 - `git` recent enough to support tags
