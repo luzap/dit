@@ -52,7 +52,10 @@ While sufficiently fully featured, `dit` lacks additional channels that would no
 
 Furthermore, the current version of the project is pinned to an older version of the [multi-party ECDSA library](https://github.com/ZenGo-X/multi-party-ecdsa) we started out with. Newer versions of the library added support for running the protocol portion asynchronously, as well as fixing several potential safety concerns.
 
+Another point worth investigating is _how_ to present code changes to the user. When normally reviewing commits with `git show <commit>` or `git log -p`, it might be hard to figure out the exact changes, especially if they were purposefully designed to evade review. 
+
 ## Future work
-- [ ] Secure communication (hashing broadcast messages according to the description
-- [ ] Better ergonomics
-- [ ] More user-readable errors
+- [ ] Secure communication (hashing broadcast messages according to the protocol description)
+- [ ] Better error handling between the protocol execution and the frontend
+- [ ] More semanitically descriptive errors for protocol failure
+- [ ] Channels: having an `enum` with all possible channel types might be the simplest way

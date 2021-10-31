@@ -18,7 +18,9 @@ pub struct Server {
 pub struct Config {
     pub project: String,
     pub server: Server,
-    pub user: Option<User>,
+    pub participants: u16,
+    pub threshold: u16,
+    pub user: Option<User>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -112,8 +112,8 @@ fn keysign_stage<P: AsRef<Path>>(
     env: &crate::git::GitEnv,
 ) -> Result<()> {
     if let Operation::SignKey {
-        participants,
-        threshold,
+        participants: _,
+        threshold: _,
         leader,
         email,
         epoch,
@@ -166,9 +166,8 @@ pub fn leader_keygen(
     args: Option<&ArgMatches>,
     env: &crate::git::GitEnv,
 ) -> Result<()> {
-    // TODO Get all of these from the arguments
-    let participants = 4;
-    let threshold = 2;
+    let participants = config.participants;
+    let threshold = config.threshold;
 
     let key_base_dir = Path::join(&env.git_dir, &cfg::CONFIG_DIR);
 
@@ -296,8 +295,8 @@ pub fn leader_tag(
         // of what we use right now, but the other variant might be vulnerable to
         // interference from a malicious developer trying to create the keys
         let op = Operation::SignTag {
-            participants: 4,
-            threshold: 2,
+            participants: config.participants,
+            threshold: config.threshold,
             tag,
         };
 
@@ -351,7 +350,7 @@ pub fn participant_tag(
     op: &Operation,
     env: &crate::git::GitEnv,
 ) -> Result<()> {
-    let (participants, threshold, tag) = match op {
+    let (_, _, tag) = match op {
             Operation::SignTag {
                 participants, threshold, tag } => (participants, threshold, tag),
                 _ => unimplemented!("If this occurs, this should mean that the entire system reached an error state somehow")

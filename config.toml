@@ -1,4 +1,6 @@
 project = "thresholds"
+participants = 4
+threshold = 2
 
 [server]
 address = "localhost"
