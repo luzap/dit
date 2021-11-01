@@ -149,7 +149,7 @@ fn keysign_stage<P: AsRef<Path>>(
         ) {
             Ok(sig) => sig,
             Err(_) => {
-                println!("Did not participate in key signing! \nMake sure to sync repository before initiating tag signing");
+                println!("{}Did not participate in key signing! \n{}Make sure to sync repository before initiating tag signing", utils::DIT_LOG, utils::DIT_LOG);
                 return Ok(());
             }
         };
@@ -159,7 +159,7 @@ fn keysign_stage<P: AsRef<Path>>(
         message.write_to_file(pgp_file)?;
         config::write_keyid(&env.git_dir, &keyid)?;
     } else {
-        println!("Started signing, with the operation: {:?}", op);
+        println!("{}Started signing, with the operation:\n{}", utils::DIT_LOG, op);
     }
 
     Ok(())
@@ -215,9 +215,10 @@ pub fn leader_keygen(
     };
     channel.start_operation(&op);
 
-    println!("Generating key shares");
+    println!("{}Generating key shares", utils::DIT_LOG);
     let keypair = keygen_stage(channel, keypair_file, config)?;
-    println!("Signing key");
+    println!("{}Generation successful.", utils::DIT_LOG);
+    println!("{}Signing generated key", utils::DIT_LOG);
     channel.end_operation(&op);
 
     let op = Operation::SignKey {
@@ -231,7 +232,7 @@ pub fn leader_keygen(
     channel.start_operation(&op);
 
     keysign_stage(channel, &op, &keypair, pgp_keyfile, env, config)?;
-    println!("Successfully signed key");
+    println!("{}Successfully signed key", utils::DIT_LOG);
 
     channel.end_operation(&op);
     channel.clear();
@@ -254,9 +255,10 @@ pub fn participant_keygen(
         fs::create_dir_all(key_base_dir)?
     };
 
-    println!("Generating key shares");
+    println!("{}Generating key shares", utils::DIT_LOG);
     let keypair = keygen_stage(channel, keypair_file, config)?;
-    println!("Signing key");
+    println!("{}Generation successful.", utils::DIT_LOG);
+    println!("{}Signing generated key", utils::DIT_LOG);
 
     let new_op = loop {
         let new_op = channel.get_current_operation();
@@ -271,7 +273,7 @@ pub fn participant_keygen(
     };
 
     keysign_stage(channel, &new_op, &keypair, pgp_keyfile, env, config)?;
-    println!("Key signing stage finished!");
+    println!("{}Successfully signed key", utils::DIT_LOG);
 
     Ok(())
 }
@@ -382,7 +384,7 @@ pub fn participant_tag(
     let (_, _, tag) = match op {
             Operation::SignTag {
                 participants, threshold, tag } => (participants, threshold, tag),
-                _ => unimplemented!("If this occurs, this should mean that the entire system reached an error state somehow")
+                _ => unimplemented!("{} Unreachable error state!", utils::DIT_LOG)
     };
 
     let mut message = Message::new();

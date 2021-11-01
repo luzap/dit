@@ -1,9 +1,12 @@
+use std::thread::sleep;
+
 use dit::app;
 use dit::comm::HTTPChannel;
 
 use dit::config;
 use dit::errors;
 use dit::errors::Result;
+use dit::utils as utl;
 
 fn main() -> Result<()> {
     let app = app::build_app();
@@ -23,7 +26,11 @@ fn main() -> Result<()> {
     // In fact, it might be a good idea to figure out how to ensure that the
     // fallthrough mode is communicated to the user, but only once.
     if config.is_err() {
-        println!("No config file present, working in git compatibility mode!");
+        println!(
+            "{}No config file present, working in git compatibility mode!",
+            utl::DIT_LOG
+        );
+        sleep(utl::USER_SLEEP);
 
         match app.get_matches().subcommand() {
             (git_command, args) => app::git_passthrough(git_command, args)?,
@@ -31,7 +38,8 @@ fn main() -> Result<()> {
 
         return Ok(());
     } else {
-        println!("Config file present, working in dit mode");
+        println!("{}Config file present, working in dit mode", utl::DIT_LOG);
+        sleep(utl::USER_SLEEP);
 
         // In this case, we actually need to consider whether it's possible to use
         // dit-specific features. For that, we need to double check how to setup
@@ -55,7 +63,13 @@ fn main() -> Result<()> {
                 reachable = true;
                 pending_operation = op;
             }
-            Err(_) => println!("No connection to server"),
+            Err(_) => {
+                println!(
+                    "{}No connection to server, working in compatibility mode",
+                    utl::DIT_LOG
+                );
+                sleep(utl::USER_SLEEP);
+            }
         };
 
         match app.get_matches().subcommand() {
@@ -74,7 +88,8 @@ fn main() -> Result<()> {
 
                         if choice == 0 {
                             dit::app::participant_keygen(&mut channel, &gitenv, &config)?;
-                            println!("Key generation is complete, and the key should be under the `.dit` folder");
+                            println!("{}Key generation is complete, the key should be under the `.dit` folder", utl::DIT_LOG);
+                            sleep(utl::USER_SLEEP);
                         }
                     }
                 }
@@ -98,7 +113,14 @@ fn main() -> Result<()> {
                             &["y", "n"],
                         )) == 0
                         {
-                            app::participant_tag(&mut channel, &pending_operation, &gitenv, &config)?;
+                            app::participant_tag(
+                                &mut channel,
+                                &pending_operation,
+                                &gitenv,
+                                &config,
+                            )?;
+                            println!("{}Tagging is done.", utl::DIT_LOG);
+                            sleep(utl::USER_SLEEP);
                         }
                     }
                 }
@@ -106,7 +128,7 @@ fn main() -> Result<()> {
             (other, args) => {
                 if reachable == true {
                     if pending_operation != dit::utils::Operation::Idle {
-                        println!("{}", pending_operation);
+                        println!("{}{}", utl::DIT_LOG, pending_operation);
                         if errors::unwrap_or_exit(dit::utils::get_user_choice(
                             "Participate in the pending operation?",
                             &["y", "n"],
@@ -114,14 +136,21 @@ fn main() -> Result<()> {
                         {
                             let gitenv = dit::git::GitEnv::new();
 
-                            // TODO Could probably remove the config and just get the vars 
+                            // TODO Could probably remove the config and just get the vars
                             // from the op
                             match pending_operation {
                                 dit::utils::Operation::KeyGen { .. } => {
-                                    app::participant_keygen(&mut channel, &gitenv, &config)?
+                                    app::participant_keygen(&mut channel, &gitenv, &config)?;
+                                    sleep(utl::USER_SLEEP);
                                 }
                                 dit::utils::Operation::SignTag { .. } => {
-                                    app::participant_tag(&mut channel, &pending_operation, &gitenv, &config)?
+                                    app::participant_tag(
+                                        &mut channel,
+                                        &pending_operation,
+                                        &gitenv,
+                                        &config,
+                                    )?;
+                                    sleep(utl::USER_SLEEP);
                                 }
                                 dit::utils::Operation::Blame {} => unimplemented!(),
                                 _ => unreachable!(),

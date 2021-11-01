@@ -7,6 +7,10 @@ use std::path::Path;
 use std::time;
 
 use crate::errors::Result;
+pub const DIT_LOG: &str = "\x1B[31m[dit]\x1B[0m\t";
+/// Executing commands instantly when the operation is done does not allow the 
+/// user to read through the results
+pub const USER_SLEEP: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Server {
@@ -160,3 +164,4 @@ pub fn get_user_choice(prompt: &str, choices: &[&str]) -> Result<usize> {
         }
     }
 }
+

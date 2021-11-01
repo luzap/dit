@@ -46,19 +46,19 @@ Producing and verifying tags:
 ## Examples
 
 In Git compatibility mode:
-[![asciicast](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6.svg)](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6)
+[![asciicast](https://asciinema.org/a/OGpT40Lrih2Ja1Lld9Q7oKkrh.svg)](https://asciinema.org/a/OGpT40Lrih2Ja1Lld9Q7oKkrh)
 
 
 In Dit mode without server:
-[![asciicast](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ.svg)](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ)
+[![asciicast](https://asciinema.org/a/cpQFjzGiNr6FTMlZNAGu0QCST.svg)](https://asciinema.org/a/cpQFjzGiNr6FTMlZNAGu0QCST)
 
 
 Key generation with external commands working:
-[![asciicast](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq.svg)](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq)
+[![asciicast](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR.svg)](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR)
 
 
-Producing and verifying tags: 
-[![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
+Producing and verifying tags:
+[![asciicast](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye.svg)](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye)
 
 
 ## Usage
