@@ -14,6 +14,7 @@ project = "sample"
 participants = 4
 threshold = 2
 
+
 [server]
 address = "localhost"
 port = 8000
@@ -27,39 +28,13 @@ We have only implemented a single, HTTP channel, with a server to go with it, wh
 - GNU Coreutils
 - Rust version `1.56.0-nightly` (may work with, but has not been tested with other versions)
 
-## Example usage
-
-In Git compatibility mode:
-[![asciicast](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6.svg)](https://asciinema.org/a/f7sa2ebAseFXGLEHlezBqvmA6)
-
-In Dit mode without server:
-[![asciicast](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ.svg)](https://asciinema.org/a/Oa0itTL11ARz31HYFe7SRqsuJ)
-
-Key generation with external commands working:
-[![asciicast](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq.svg)](https://asciinema.org/a/wMH10hdgNlwmn1BpiMKBjTnBq)
-
-Producing and verifying tags: 
-[![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
-
-
-
 ## Examples
-
-In Git compatibility mode:
-[![asciicast](https://asciinema.org/a/OGpT40Lrih2Ja1Lld9Q7oKkrh.svg)](https://asciinema.org/a/OGpT40Lrih2Ja1Lld9Q7oKkrh)
-
-
-In Dit mode without server:
-[![asciicast](https://asciinema.org/a/cpQFjzGiNr6FTMlZNAGu0QCST.svg)](https://asciinema.org/a/cpQFjzGiNr6FTMlZNAGu0QCST)
-
 
 Key generation with external commands working:
 [![asciicast](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR.svg)](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR)
 
-
 Producing and verifying tags:
 [![asciicast](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye.svg)](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye)
-
 
 ## Usage
 `dit` introduces two new commands:
@@ -68,14 +43,14 @@ Producing and verifying tags:
 
 ## Local Testing
 1. Run the `server` executable in the background
-3. Make four different copies of the repository you are going to be working on, to mimic the distributed workflow (running four instances of the threshold signing protocols in the same folder was not an intended use-case, and the executable outputs its intermediary files to the `.dit` directory under a hard-coded name). 
-4. Start the leader by running `dit keygen`. 
+3. Make four different copies of the repository you are going to be working on, to mimic the distributed workflow (running four instances of the threshold signing protocols in the same folder was not an intended use-case, and the executable outputs its intermediary files to the `.dit` directory under a hard-coded name).
+4. Start the leader by running `dit keygen`.
 5. Run the executable in the other copies of the directories with any `dit` command (`dit` will do, as will `dit` followed by any Git subcommand)
 6. Each of the executables will present you with an option of participating in the key generation
 7. (Optional) When the protocol is completed, you can check in the public key (created under the `.dit` directory as `.gpg` file) into Git
 8. When you want to create a tag, run `dit start-tag [tag_name]` and enter a tag message.
 9. Proceed as in step 5
-10. When the protocol is done, you can verify the tag on the leader's repository by running `gpg --import .dit/pubkey.gpg` (replacing the name of the keyfile) and then `git tag -v [tag_name]`. Note that this output verifies that the signature is good, but does not include the CRC that is part of the ASCII-armoring (for the sake of simplicity), and that the key only has its own signature, which GPG interprets to mean that it is not trustworthy.
+10. When the protocol is done, you can verify the tag on the leader's repository by running `gpg --import .dit/pubkey.gpg` (replacing the name of the keyfile) and then `git tag -v [tag_name]`. Note that the key only has its own signature, which GPG interprets to mean that it is not trustworthy.
 
 ## Limitations
 
@@ -86,6 +61,8 @@ Furthermore, the current version of the project is pinned to an older version of
 Another point worth investigating is _how_ to present code changes to the user. When normally reviewing commits with `git show <commit>` or `git log -p`, it might be hard to figure out the exact changes, especially if they were purposefully designed to evade review. 
 
 ## Future work
+- [ ] Handling changing developer groups: the group of developers working on a project does not remain constant over time, and implementing ways of redistributing key shares would help make the process more seamless
+- [ ] Key rotation: to ensure that a determined attacker could not eventually obtain sufficient key shares to unilaterally sign releases, an efficient key rotation protocol (like the one found [here](https://github.com/ZenGo-X/fs-dkr)) could be implemented
 - [ ] Secure communication (hashing broadcast messages according to the protocol description)
 - [ ] Better error handling between the protocol execution and the front-end
 - [ ] More semantically descriptive errors for protocol failure
@@ -95,4 +72,3 @@ Another point worth investigating is _how_ to present code changes to the user. 
 - [ ] Keyid file: the GPG key ID is best generated when the key is parsed into an internal data representation, but we have focused our efforts purely on exporting GPG keys, not interpreting them for further data. Currently, we store the key ID of the current key in `.dit/keyid`, but this seems like a hack
 - [ ] Reducing communication: currently, `dit` phones home after every invocation, which could be reduced if we could set some sort of timer between invocations (have it run as a server) or have an environment variable be decremented upon every invocation.
 - [ ] Reduing GPG noise: without additional signatures to indicate the identity of the user, GPG will always say that the identity of the user has not been vouched for by any third party. If the key gets checked into version control (which is the simplest current path for distribution), then the participants can sign the public key and commit the change, though there might be other avenues to explore.
-- [ ] Server improvements: the current server might be a little too liberal with locks, and there might be both better and more efficient ways of handling the data synchronization
