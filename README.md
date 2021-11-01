@@ -34,7 +34,7 @@ Key generation with external commands working:
 [![asciicast](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR.svg)](https://asciinema.org/a/zT7t0ziL8r6Dh8bXQTe2R67kR)
 
 Producing and verifying tags:
-[![asciicast](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye.svg)](https://asciinema.org/a/f0IZ5g51y6hddWD3vmAy4f7Ye)
+[![asciicast](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8.svg)](https://asciinema.org/a/19O9LazuZ3qJqeyBeUcn76Ax8)
 
 ## Usage
 `dit` introduces two new commands:
