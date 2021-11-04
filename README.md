@@ -42,7 +42,7 @@ Producing and verifying tags:
  - `start-tag`: initiate the distributed tagging. This is semantically as close as possible to the normal tagging process, with the user's `$EDITOR` being launched to indicate the tag message. Note that it takes an optional commit hash, with the `HEAD` being used by default
 
 ## Local Testing
-1. Run the `server` executable in the background
+1. Run the `dit-server` executable in the background (either via `cargo run --bin dit-server` or if you have installed the package to your PATH, via `dit-server`)
 3. Make four different copies of the repository you are going to be working on, to mimic the distributed workflow (running four instances of the threshold signing protocols in the same folder was not an intended use-case, and the executable outputs its intermediary files to the `.dit` directory under a hard-coded name).
 4. Start the leader by running `dit keygen`.
 5. Run the executable in the other copies of the directories with any `dit` command (`dit` will do, as will `dit` followed by any Git subcommand)
